@@ -32,7 +32,7 @@ between the systems appears with an explanation.
 | 3 | Turn euros into S-EUR (hold → mint → book) | you trigger |
 | 4 | Pay another customer, across Sparkassen | you trigger |
 | 5 | L2 data is published on RL1 → **safe** (~1–5 min) | automatic |
-| 6 | RL1 finalizes → **finalized** (~15–20 min) | background: the story doesn't wait |
+| 6 | **Final on RL1** at the moment of anchoring (a Regulated Layer One finalizes on inclusion; the Sepolia stand-in confirms ~13 min later) | automatic |
 | 7 | L2 state is proposed in a dispute game (3.5-day challenge window) | background: the story doesn't wait |
 | 8 | Turn S-EUR back into euros (burn → book) | you trigger |
 | 9 | Check that OSPlus and the chain match | you trigger |

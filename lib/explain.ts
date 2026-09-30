@@ -109,19 +109,23 @@ export const STEPS: StepExplain[] = [
   },
   {
     id: "finality",
-    title: "RL1 finalizes (in the background)",
+    title: "Final on RL1 (immediately)",
     kind: "wait",
-    summary: "RL1's own consensus makes the block containing our batch irreversible. The L2 transaction is now final.",
+    summary: "RL1 is a Regulated Layer One with BFT consensus: the block that anchors our batch is final the moment it is included.",
     story:
-      "An RL1 block can in theory still be reorganised shortly after it is created. After two 'epochs' (about 13 minutes) RL1's validators finalize it, " +
-      "and reverting it would require destroying a huge amount of staked ETH. When the RL1 block holding our batch is finalized, the L2 transaction is final too.",
+      "Unlike public proof-of-stake chains, a Regulated Layer One is run by a known set of regulated validators that agree on each block before it is added. " +
+      "There are no competing blocks and no reorganisations, so a block is irreversible as soon as it exists. " +
+      "Anchoring on RL1 and settlement finality are therefore the same moment.",
     who: {
-      l1: "RL1 validators finalize the epoch that contains the batch.",
-      l2: "The L2 'finalized' head moves past our transaction.",
-      gateway: "Marks the transaction as finalized. This is the natural point to treat the booking as irrevocable ('endgültig gebucht').",
+      l1: "The validators of the Regulated Layer One agree on the block that contains the batch. It is final on inclusion.",
+      l2: "The L2 'finalized' head moves together with the 'safe' head.",
+      gateway: "Marks the transaction as final. This is the point to treat the booking as irrevocable ('endgültig gebucht').",
     },
-    why: "This gives the bank a clear, objective settlement-finality moment, comparable to settlement finality in a payment system.",
-    timing: { simulated: "about 20 seconds", live: "about 15–20 minutes (RL1 finality ≈ 13 min + batch delay)" },
+    why: "The bank gets settlement finality within the same ~2 minutes as the anchoring: one clear, objective moment, comparable to finality in a payment system.",
+    timing: {
+      simulated: "immediately, together with the anchoring",
+      live: "immediately on a Regulated Layer One. The Sepolia test network used as a stand-in here confirms its own finality ~13 min later.",
+    },
   },
   {
     id: "proposal",
@@ -213,7 +217,7 @@ export const GLOSSARY: { term: string; text: string }[] = [
   { term: "Rollup", text: "An L2 that 'rolls up' many transactions and publishes them on the L1, so anyone can verify the L2 from L1 data." },
   { term: "Unsafe", text: "Confirmed by the L2 sequencer only. Fast (2 s), but it relies on the sequencer." },
   { term: "Safe", text: "The transaction's data has been published on RL1. Anyone can re-derive it." },
-  { term: "Finalized", text: "The RL1 block holding that data is final. The transaction can no longer be reversed." },
+  { term: "Finalized", text: "The RL1 block holding that data is final. On a Regulated Layer One this happens immediately at inclusion. The transaction can no longer be reversed." },
   { term: "Blob", text: "A cheap data attachment for RL1 transactions (EIP-4844), designed for rollups. Kept by RL1 nodes for ~18 days." },
   { term: "Dispute game", text: "An RL1 contract where a proposed L2 state can be challenged for 3.5 days before it's accepted." },
   { term: "S-EUR", text: "The demo's tokenized deposit: 1 S-EUR = 1 € on a Sparkasse's Sammelkonto. Permissioned and redeemable at par." },
@@ -268,10 +272,10 @@ export const CHAPTERS: Chapter[] = [
   },
   {
     id: "secure",
-    title: "Anchored on RL1",
-    headline: "The payment is anchored on RL1 in about 2 minutes",
-    text: "The OP Stack network publishes the payment data on RL1 within a few minutes. From then on anyone can verify it from RL1 data. Nobody has to wait for anything after that: RL1 finality (~15 min) and the state proof (3.5-day challenge window) complete in the background.",
-    benefit: "Customers and branches get instant payments. The bank gets an auditable anchor on RL1 within minutes, and irrevocable finality follows automatically.",
+    title: "Final on RL1",
+    headline: "The payment is anchored on RL1 and final in about 2 minutes",
+    text: "The OP Stack network publishes the payment data on RL1 within a few minutes. RL1 is a Regulated Layer One with immediate finality, so the payment is irreversible from that moment on. Only the state proof (3.5-day challenge window) continues in the background, and nobody has to wait for it.",
+    benefit: "Customers and branches get instant payments. The bank gets auditable, irrevocable settlement on RL1 within minutes.",
     steps: ["batch", "finality", "proposal"],
     systems: ["l2", "l1"],
     auto: true,

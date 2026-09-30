@@ -8,8 +8,8 @@ import { LAYERS, type StepId } from "@/lib/types";
 import { StepActions } from "./StepActions";
 import { Button, Card, LayerBadge, StageBadge, cn } from "./ui";
 
-/** Steps that complete on their own after the payment is anchored on RL1; the story never waits for them. */
-const BACKGROUND: StepId[] = ["finality", "proposal"];
+/** Steps that complete on their own after the payment is final on RL1; the story never waits for them. */
+const BACKGROUND: StepId[] = ["proposal"];
 
 export function Walkthrough() {
   return (

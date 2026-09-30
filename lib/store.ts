@@ -150,7 +150,7 @@ export const useDemo = create<DemoState>((set, get) => ({
     };
     if (id === "account") {
       if (!k()[0] && !(await run("Opening Anna's account", "onboard", (gw) => gw.onboard("Anna Schmidt", "SPK-MS")))) return;
-      if (!k()[1] && !(await run("Opening Ben's account", "onboard", (gw) => gw.onboard("Ben Yilmaz", "SPK-BS")))) return;
+      if (!k()[1] && !(await run("Opening Ben's account", "onboard", (gw) => gw.onboard("Ben Müller", "SPK-BS")))) return;
       if (await run("SEPA credit for Anna", "fund", (gw) => gw.fund(k()[0].kundennr, 5_000_00))) next(id);
     } else if (id === "convert") {
       if (await run("Converting €2,500", "tokenize", (gw) => gw.tokenize(k()[0].kundennr, 2_500_00))) next(id);
@@ -308,15 +308,15 @@ export const useDemo = create<DemoState>((set, get) => ({
       let ben = kunden[1]?.kundennr;
       if (!anna && !(await run("Onboard Anna", "onboard", async (gw) => void (anna = (await gw.onboard("Anna Schmidt", "SPK-MS")).kundennr)))) return;
       await pause();
-      if (!ben && !(await run("Onboard Ben", "onboard", async (gw) => void (ben = (await gw.onboard("Ben Yilmaz", "SPK-BS")).kundennr)))) return;
+      if (!ben && !(await run("Onboard Ben", "onboard", async (gw) => void (ben = (await gw.onboard("Ben Müller", "SPK-BS")).kundennr)))) return;
       await pause();
       if (!(await run("Fund", "fund", (gw) => gw.fund(anna!, 5_000_00)))) return;
       await pause();
       if (!(await run("Tokenize", "tokenize", (gw) => gw.tokenize(anna!, 2_500_00)))) return;
       await pause();
       if (!(await run("Transfer", "transfer", (gw) => gw.transfer(anna!, ben!, 1_000_00)))) return;
-      // Wait only until the payments are anchored on RL1 ("safe"). Finality (~15 min on RL1) and the
-      // state proof (3.5-day challenge window) complete in the background and never block the story.
+      // Wait only until the payments are anchored on RL1, which is final on a Regulated Layer One. The
+      // state proof (3.5-day challenge window) completes in the background and never blocks the story.
       set({ selected: "batch" });
       await waitFor(() => g().tracked.every((t) => t.stage !== "unsafe"), get().mode === "simulated" ? 60_000 : 10 * 60_000);
       await pause();

@@ -33,7 +33,7 @@ export function AboutView() {
         <ol className="list-decimal space-y-1 pl-5">
           <li><b>Unsafe</b>: the sequencer included the tx in an L2 block. Instant UX, but it only relies on the sequencer.</li>
           <li><b>Safe</b>: op-batcher posted the block&apos;s data to L1. Anyone can re-derive it; a sequencer can no longer silently rewrite it.</li>
-          <li><b>Finalized</b>: the L1 block with that batch is finalized (~13 min). This is the natural point for &quot;Buchung endgültig&quot;.</li>
+          <li><b>Finalized</b>: the RL1 block with that batch is final. A Regulated Layer One with BFT consensus finalizes on inclusion, so this coincides with <i>safe</i> (the Sepolia stand-in used live needs ~13 min). This is the natural point for &quot;Buchung endgültig&quot;.</li>
         </ol>
         <p className="mt-2">
           Separately, op-proposer posts the L2 <b>output root</b> to a dispute game. After the challenge window (3.5 days, plus a further delay before withdrawals)
@@ -45,7 +45,7 @@ export function AboutView() {
         <h3 className="mb-1 text-sm font-semibold text-slate-900">Simulation timings</h3>
         <p>
           L2 block {SIM_PARAMS.l2BlockMs / 1000}s (real 2s) · L1 block {SIM_PARAMS.l1BlockMs / 1000}s (real 12s) · batch every{" "}
-          {SIM_PARAMS.batchEveryL1Blocks} L1 blocks · L1 finality after {SIM_PARAMS.l1FinalityDepth} blocks (real ~64) · proposal every{" "}
+          {SIM_PARAMS.batchEveryL1Blocks} RL1 blocks · RL1 finality immediate at inclusion (BFT) · proposal every{" "}
           {SIM_PARAMS.proposalIntervalMs / 1000}s · challenge window {SIM_PARAMS.challengeWindowMs / 1000}s (real 3.5 days). In <b>Live</b>{" "}
           mode nothing is simulated except OSPlus: heads, batches and dispute games are read from the actual chains.
         </p>

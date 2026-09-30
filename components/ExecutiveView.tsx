@@ -24,7 +24,7 @@ export function ExecutiveView() {
   const idx = CHAPTERS.indexOf(chapter);
 
   const chapterState = (c: Chapter) => {
-    // Finality and the state proof run in the background; the chapter is done once anchored on RL1.
+    // RL1 finalizes on inclusion, so the chapter is done once anchored; only the state proof runs on in the background.
     const core = c.id === "secure" ? (["batch"] as const) : c.steps;
     if (core.every((id) => states[id] === "done")) return "done";
     if (c.steps.some((id) => states[id] === "active")) return "active";
@@ -145,7 +145,6 @@ function Hero() {
   const st = s.status;
   const pay = g.tracked.find((t) => t.label.startsWith("Transfer")) ?? g.tracked.find((t) => t.label.startsWith("Mint"));
   const anchored = g.tracked.find((t) => t.safeAt);
-  const final = g.tracked.find((t) => t.finalizedAt);
   const supply = st?.token?.totalSupply;
   const omnibus = g.osplus.state.konten.filter((k) => k.produkt !== "Girokonto").reduce((a, k) => a + k.saldo, 0);
   const backing = supply ? Math.round((omnibus / supply) * 100) : undefined;
@@ -159,15 +158,13 @@ function Hero() {
       measured: !!pay,
     },
     {
-      label: "Anchored on RL1 in",
+      label: "Final on RL1 in",
       value: anchored ? fmtSec(anchored.safeAt! - anchored.confirmedAt) : live ? "≈ 2 min" : "≈ 5 s",
-      sub: final
-        ? `final after ${fmtDuration(final.finalizedAt! - final.confirmedAt)}${live ? "" : " (simulated)"}`
-        : anchored
-          ? `${live ? "measured" : "simulated"} · final ≈ 15 min later, in background`
-          : live
-            ? "expected · published on RL1"
-            : "simulated (real ≈ 2 min)",
+      sub: anchored
+        ? `${live ? "measured" : "simulated"} · anchored = final on RL1`
+        : live
+          ? "expected · anchored = final"
+          : "simulated (real ≈ 2 min)",
       measured: !!anchored,
     },
     { label: "Digital euros in circulation", value: supply !== undefined ? fmtEur(supply) : "—", sub: "S-EUR on the L2", measured: supply !== undefined },
@@ -302,7 +299,6 @@ function SettlementTimeline() {
   }
   const since = (at?: number) => (at ? `after ${fmtSec(at - t.confirmedAt)}` : undefined);
   const ex = e.gateway.explorers;
-  const batchFinal = t.batchL1Block !== undefined && st && t.batchL1Block <= st.l1.finalized;
   const rows = [
     {
       label: "Confirmed on the OP Stack L2",
@@ -312,21 +308,12 @@ function SettlementTimeline() {
       link: { url: explorerUrl(ex.l2, "tx", t.hash), text: `L2 tx ${short(t.hash)}` },
     },
     {
-      label: "Published on RL1",
-      sub: "anyone can verify it from RL1 data",
+      label: "Anchored & final on RL1",
+      sub: "published on RL1, which finalizes blocks on inclusion: from here the payment is irreversible",
       done: !!t.safeAt,
       when: since(t.safeAt),
       wait: live ? "usually 1–5 min" : "a few seconds",
-      link: t.batchTx ? { url: explorerUrl(ex.l1, "tx", t.batchTx), text: `RL1 batch tx ${short(t.batchTx)}` } : undefined,
-    },
-    {
-      label: "Final on RL1",
-      sub: "irreversible, the settlement-finality point",
-      done: !!t.finalizedAt,
-      when: since(t.finalizedAt),
-      wait: t.safeAt ? `expected ≈ ${clock(t.safeAt + (live ? 13 * 60_000 : 18_000))}` : live ? "≈ 15 min after publishing" : "a few seconds",
-      background: true,
-      link: t.batchL1Block !== undefined && (t.finalizedAt || batchFinal) ? { url: explorerUrl(ex.l1, "block", t.batchL1Block), text: `RL1 block #${t.batchL1Block}` } : undefined,
+      link: t.batchTx ? { url: explorerUrl(ex.l1, "tx", t.batchTx), text: `RL1 batch tx ${short(t.batchTx)} · block #${t.batchL1Block}` } : undefined,
     },
     {
       label: "State proof on RL1",
@@ -391,14 +378,19 @@ function SettlementTimeline() {
           );
         })}
       </ol>
-      {t.safeAt && !t.finalizedAt && (
+      {t.safeAt && (
         <p className="mt-3 text-[13.5px] text-slate-600">
-          ✓ The payment is anchored on RL1. <b>You can move on</b>: finality and the state proof complete on their own, and this page updates them
+          ✓ The payment is final on RL1. <b>You can move on</b>: only the state proof continues in the background, and this page updates it
           automatically.
+        </p>
+      )}
+      {live && (
+        <p className="mt-2 text-[12px] text-slate-500">
+          This live demo uses the public Sepolia test network as a stand-in for RL1. A Regulated Layer One with BFT consensus is final at inclusion;
+          Sepolia itself confirms its own finality ~13 min later (see the technical view).
         </p>
       )}
     </div>
   );
 }
 
-const clock = (ms: number) => new Date(ms).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });

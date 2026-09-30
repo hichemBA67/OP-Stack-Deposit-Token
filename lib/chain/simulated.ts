@@ -6,7 +6,8 @@
  *  - sequencer (op-geth + op-node): orders txs into L2 blocks -> "unsafe" head
  *  - batcher (op-batcher): posts compressed L2 batches to L1 as blobs; once the
  *    L1 block containing a batch exists, the L2 blocks in it become "safe"
- *  - L1 finality: after enough L1 blocks the batch is finalized -> L2 "finalized"
+ *  - RL1 finality: RL1 is a Regulated Layer One with BFT consensus, so the block that includes
+ *    a batch is final immediately -> L2 "safe" and "finalized" advance together
  *  - proposer (op-proposer): creates a dispute game with an output root on L1
  *  - challenge window: the game resolves DEFENDER_WINS if nobody challenges
  *
@@ -28,7 +29,7 @@ export const SIM_PARAMS = {
   l2BlockMs: 1_000, // real OP Stack: 2s
   l1BlockMs: 3_000, // real RL1 (Sepolia): 12s
   batchEveryL1Blocks: 2, // real: batcher max-channel-duration, typically minutes
-  l1FinalityDepth: 6, // real: 2 epochs = 64 blocks ~ 12.8 min
+  l1FinalityDepth: 0, // RL1 (BFT consensus): final at inclusion. The Sepolia stand-in needs ~64 blocks.
   proposalIntervalMs: 10_000, // real: typically ~1h
   challengeWindowMs: 45_000, // real: 3.5 days
 };
@@ -251,7 +252,7 @@ export class SimulatedOpStack implements ChainAdapter {
         name: "RL1 (simulated)",
         chainId: 11155111,
         head: l1Head,
-        safe: l1Head - 2,
+        safe: l1Head,
         finalized: l1Head - SIM_PARAMS.l1FinalityDepth,
       },
       l2: {

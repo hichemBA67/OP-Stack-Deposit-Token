@@ -7,7 +7,7 @@ import { INSTITUTE } from "@/lib/osplus/simulator";
 import type { StepId } from "@/lib/types";
 import { Button, cn, inputCls } from "./ui";
 
-const NAMES = ["Anna Schmidt", "Ben Yilmaz", "Clara Weber", "David Nowak", "Eva Hoffmann", "Felix Braun"];
+const NAMES = ["Anna Schmidt", "Ben Müller", "Clara Weber", "David Nowak", "Eva Hoffmann", "Felix Braun"];
 
 function Field({ label, children, className }: { label: string; children: React.ReactNode; className?: string }) {
   return (
