@@ -173,7 +173,7 @@ function SettlementProgress({ step }: { step: StepId }) {
       </div>
       {!tracked.length ? (
         <p className="text-[13px] text-slate-600">
-          No payments yet. Complete steps 3–4 first, then come back here and watch them move from <b>unsafe</b> to <b>safe</b> to <b>finalized</b>.
+          No transactions yet. Complete steps 1–4 first, then come back here and watch them move from <b>unsafe</b> to <b>safe</b> to <b>finalized</b>.
         </p>
       ) : (
         <ul className="divide-y divide-sky-100">

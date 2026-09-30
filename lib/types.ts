@@ -12,6 +12,7 @@ export type Component =
   | "giro"
   | "hold"
   | "omnibus"
+  | "depot"
   | "journal"
   | "api"
   | "compliance"
@@ -20,6 +21,8 @@ export type Component =
   | "recon"
   | "sequencer"
   | "token"
+  | "bond"
+  | "dvp"
   | "batcher"
   | "proposer"
   | "batchInbox"
@@ -47,12 +50,13 @@ export interface TraceEvent {
 
 export type StepId =
   | "onboard"
-  | "fund"
+  | "issue"
   | "tokenize"
-  | "transfer"
+  | "dvp"
   | "batch"
   | "finality"
   | "proposal"
+  | "coupon"
   | "redeem"
   | "reconcile";
 

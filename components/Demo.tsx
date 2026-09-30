@@ -4,6 +4,7 @@ import { ChevronDown, Copy, ExternalLink, Landmark, Pause, Play, RotateCcw, Spar
 import { useEffect, useState } from "react";
 import { useDemo, type Mode } from "@/lib/store";
 import { GLOSSARY } from "@/lib/explain";
+import { BOND } from "@/lib/bond";
 import { fmtEur, short } from "@/lib/format";
 import { AboutView } from "./AboutView";
 import { ExecutiveView } from "./ExecutiveView";
@@ -117,12 +118,13 @@ function TechnicalView() {
     <>
       <Intro />
 
-      <Card className="grid grid-cols-2 gap-x-4 gap-y-2 px-4 py-2.5 sm:grid-cols-3 lg:grid-cols-6">
+      <Card className="grid grid-cols-2 gap-x-4 gap-y-2 px-4 py-2.5 sm:grid-cols-4 lg:grid-cols-7">
         <Stat label="Ledger" value={live ? "OP Sepolia (live)" : "Simulation"} sub={s.busy ? `⏳ ${s.busy}…` : s.autoplay ? "playing all steps" : "ready"} />
         <Stat label="Newest L2 block" value={st ? `#${st.l2.unsafe}` : "—"} sub="confirmed by sequencer" />
         <Stat label="On RL1 up to" value={st ? `#${st.l2.safe}` : "—"} sub="L2 'safe' head" />
         <Stat label="Final up to" value={st ? `#${st.l2.finalized}` : "—"} sub="L2 'finalized' head" />
-        <Stat label="S-EUR in circulation" value={st?.token ? fmtEur(st.token.totalSupply) : "—"} sub={st?.token ? `contract ${short(st.token.address)}` : "created in step 1"} />
+        <Stat label="S-EUR in circulation" value={st?.cash ? fmtEur(st.cash.totalSupply) : "—"} sub={st?.cash ? `token ${short(st.cash.address)}` : "deployed in step 1"} />
+        <Stat label="Bonds in register" value={st?.bond ? `${st.bond.totalSupply} × ${fmtEur(BOND.nominalCents)}` : "—"} sub={BOND.isin} />
         <Stat label="Gateway gas" value={st?.gateway ? `${Number(st.gateway.balanceEth).toFixed(4)} ETH` : "—"} sub="pays L2 fees" />
       </Card>
 
@@ -178,8 +180,8 @@ function Intro() {
         <div className="grid gap-4 border-t border-slate-100 px-4 py-3 text-[13.5px] leading-relaxed text-slate-700 md:grid-cols-3">
           <div>
             <div className="mb-1 font-semibold text-slate-900">The idea</div>
-            A Sparkasse issues <b>digital euros (S-EUR)</b> on a blockchain. Each token is a normal bank deposit: backed 1:1 by euros on a special account in
-            OSPlus and redeemable at any time. Payments between customers settle in seconds, 24/7.
+            A municipal utility issues a <b>tokenized green bond</b> (an eWpG crypto security). A corporate investor buys it with <b>tokenized deposits
+            (S-EUR)</b> from its Sparkasse. Bond and cash settle <b>delivery versus payment</b> in one transaction, in seconds instead of T+2.
           </div>
           <div>
             <div className="mb-1 font-semibold text-slate-900">The systems</div>
@@ -189,7 +191,7 @@ function Intro() {
           </div>
           <div>
             <div className="mb-1 font-semibold text-slate-900">How to use this page</div>
-            Walk through the <b>9 steps</b> below one at a time. Each step explains what happens and why, and lets you trigger it. Or press{" "}
+            Walk through the <b>10 steps</b> below one at a time. Each step explains what happens and why, and lets you trigger it. Or press{" "}
             <b>Play all steps</b>. Click any box in the architecture to learn what it does.
           </div>
         </div>
@@ -259,7 +261,7 @@ function LiveBanner() {
         <>
           <div className="font-semibold">One-time setup: give the gateway some test ETH for fees</div>
           <p className="mt-1">
-            Every transaction on OP Sepolia costs a tiny fee (gas), paid by the gateway, never by customers. The gateway&apos;s wallet is empty. Send it a
+            Every transaction on OP Sepolia costs a tiny fee (gas), paid by the gateway, never by clients. The gateway&apos;s wallet is empty. Send it a
             small amount of <b>OP Sepolia ETH</b> (0.01 is plenty for hundreds of steps) from a free faucet. This page updates automatically.
           </p>
           <div className="mt-2 flex flex-wrap items-center gap-2">

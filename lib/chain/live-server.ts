@@ -8,6 +8,7 @@ import {
   isAddress,
   parseAbi,
   parseAbiItem,
+  type Abi,
   type Address,
   type PublicClient,
 } from "viem";
@@ -15,9 +16,17 @@ import { privateKeyToAccount } from "viem/accounts";
 import { chainConfig } from "viem/op-stack";
 import { optimismSepolia } from "viem/chains";
 import type { Hex } from "../types";
-import { depositTokenAbi, depositTokenBytecode } from "./artifact";
+import { BOND, BOND_MATURITY_UNIX } from "../bond";
+import {
+  bondTokenAbi,
+  bondTokenBytecode,
+  depositTokenAbi,
+  depositTokenBytecode,
+  dvpSettlementAbi,
+  dvpSettlementBytecode,
+} from "./artifact";
 import { deriveCustodyAccount, refToBytes32 } from "./custody";
-import type { BatchInfo, ChainStatus, GameStatus, ProposalInfo, TxReceipt } from "./types";
+import type { BatchInfo, ChainStatus, Contracts, GameStatus, ProposalInfo, TxReceipt } from "./types";
 
 /**
  * Live chain access for the gateway. Runs only on the server (Next.js route
@@ -176,75 +185,97 @@ function noteWrite(block: bigint) {
   if (!lastWriteBlock || block > lastWriteBlock) lastWriteBlock = block;
 }
 
-/** The S-EUR contract of the caller's demo run (the browser passes it with every request). */
-function tokenAddress(requested?: string): Address {
-  if (!requested || !isAddress(requested)) throw new Error("No S-EUR contract for this run yet - run init first");
-  return requested;
+/** The contracts of the caller's demo run (the browser passes them with every request). */
+export type RunContracts = Partial<Record<keyof Contracts, string>>;
+
+function contract(run: RunContracts | undefined, key: keyof Contracts): Address {
+  const a = run?.[key];
+  if (!a || !isAddress(a)) throw new Error("No contracts for this run yet - run init first");
+  return a;
+}
+
+type SentTx = { hash: Hex; receipt: Awaited<ReturnType<Ctx["l2"]["waitForTransactionReceipt"]>> };
+
+/** Send one tx with a fixed gas limit and a locally tracked nonce, and wait for its receipt. */
+async function send(c: Ctx, tx: () => Promise<Hex>): Promise<SentTx> {
+  const hash = await tx().catch((e) => {
+    nextNonce = undefined;
+    throw e;
+  });
+  const receipt = await c.l2.waitForTransactionReceipt({ hash });
+  noteWrite(receipt.blockNumber);
+  return { hash, receipt };
 }
 
 // ------------------------------------------------------------------ actions
 
 /**
- * Deploy a fresh S-EUR contract for this demo run. OSPlus is simulated and starts empty on every
- * run, so the token ledger must start empty too, otherwise reconciliation would compare this
- * run's OSPlus books with tokens left over from earlier runs.
+ * Deploy a fresh set of contracts for this demo run: the S-EUR cash token, the bond register
+ * and the DvP contract, then authorise the DvP contract on both tokens. OSPlus is simulated and
+ * starts empty on every run, so the ledgers on the chain must start empty too.
  */
 export async function init() {
   const c = await ctx();
   const bal = await c.l2.getBalance({ address: c.account.address });
   if (bal === 0n) {
-    throw new Error(
-      `Gateway ${c.account.address} has no ETH on L2 (chain ${c.l2ChainId}). Fund it first (faucet or L1->L2 deposit).`,
-    );
+    throw new Error(`Gateway ${c.account.address} has no ETH on L2 (chain ${c.l2ChainId}). Fund it first (faucet or L1->L2 deposit).`);
   }
   return serial(async () => {
-    const hash = await c.wallet
-      .deployContract({
-        abi: depositTokenAbi,
-        bytecode: depositTokenBytecode,
-        args: [c.account.address],
-        gas: GAS_LIMIT.deploy,
-        nonce: await takeNonce(c),
-      })
-      .catch((e) => {
-        nextNonce = undefined;
-        throw e;
-      });
-    const r = await c.l2.waitForTransactionReceipt({ hash });
-    if (r.status !== "success" || !r.contractAddress) throw new Error(`Deployment ${hash} failed`);
-    noteWrite(r.blockNumber);
-    return { tokenAddress: r.contractAddress as Hex, deployed: true, txHash: hash };
+    const gw = c.account.address;
+    const deploy = async (abi: Abi, bytecode: Hex, args: readonly unknown[]) => {
+      const { hash, receipt } = await send(c, async () =>
+        c.wallet.deployContract({ abi, bytecode, args: args as never, gas: GAS_LIMIT.deploy, nonce: await takeNonce(c) }),
+      );
+      if (receipt.status !== "success" || !receipt.contractAddress) throw new Error(`Deployment ${hash} failed`);
+      return { hash, address: receipt.contractAddress as Hex };
+    };
+    const cash = await deploy(depositTokenAbi, depositTokenBytecode, [gw]);
+    const bond = await deploy(bondTokenAbi, bondTokenBytecode, [
+      BOND.name, BOND.symbol, BOND.isin, BigInt(BOND.nominalCents), BOND.couponBps, BigInt(BOND_MATURITY_UNIX), gw,
+    ]);
+    const dvp = await deploy(dvpSettlementAbi, dvpSettlementBytecode, [gw, bond.address, cash.address]);
+    const authorise = async (token: Hex, abi: typeof depositTokenAbi | typeof bondTokenAbi) => {
+      const { hash, receipt } = await send(c, async () =>
+        c.wallet.writeContract({ address: token, abi, functionName: "setGateway", args: [dvp.address, true], gas: GAS_LIMIT.call, nonce: await takeNonce(c) }),
+      );
+      if (receipt.status !== "success") throw new Error(`Transaction ${hash} reverted`);
+      return hash;
+    };
+    const authCash = await authorise(cash.address, depositTokenAbi);
+    const authBond = await authorise(bond.address, bondTokenAbi);
+    return {
+      contracts: { cash: cash.address, bond: bond.address, dvp: dvp.address },
+      txs: [
+        { label: "Deploy the S-EUR cash token", hash: cash.hash, address: cash.address },
+        { label: "Deploy the bond register (BondToken)", hash: bond.hash, address: bond.address },
+        { label: "Deploy the DvP settlement contract", hash: dvp.hash, address: dvp.address },
+        { label: "Authorise DvP contract on the cash token", hash: authCash },
+        { label: "Authorise DvP contract on the bond register", hash: authBond },
+      ],
+    };
   });
 }
 
-export function provisionWallet(iban: string) {
+export function provisionWallet(id: string) {
   const seed = env("CUSTODY_SEED") ?? "sparkassen-demo-hsm";
-  return deriveCustodyAccount(seed, iban).address as Hex;
+  return deriveCustodyAccount(seed, id).address as Hex;
 }
 
-type WriteFn = "setAllowed" | "mint" | "burn" | "controllerTransfer";
-
-async function write(token: string | undefined, functionName: WriteFn, args: readonly unknown[]): Promise<TxReceipt> {
+/** Write to one of the run's contracts. A revert throws unless `allowRevert` (then status "reverted"). */
+async function write(address: Address, abi: Abi, functionName: string, args: readonly unknown[], allowRevert = false): Promise<TxReceipt> {
   const c = await ctx();
-  const address = tokenAddress(token);
   return serial(async () => {
-    const hash = await c.wallet
-      .writeContract({
+    const { hash, receipt: r } = await send(c, async () =>
+      c.wallet.writeContract({
         address,
-        abi: depositTokenAbi,
+        abi,
         functionName,
-        // viem can't narrow a union of function names to one args tuple
         args: args as never,
         gas: GAS_LIMIT.call,
         nonce: await takeNonce(c),
-      })
-      .catch((e) => {
-        nextNonce = undefined;
-        throw e;
-      });
-    const r = await c.l2.waitForTransactionReceipt({ hash });
-    if (r.status !== "success") throw new Error(`Transaction ${hash} reverted`);
-    noteWrite(r.blockNumber);
+      }),
+    );
+    if (r.status !== "success" && !allowRevert) throw new Error(`Transaction ${hash} reverted`);
     const l1Fee = (r as { l1Fee?: bigint | null }).l1Fee;
     const block = await fresh(() => c.l2.getBlock({ blockNumber: r.blockNumber }));
     return {
@@ -253,27 +284,36 @@ async function write(token: string | undefined, functionName: WriteFn, args: rea
       l2Timestamp: Number(block.timestamp) * 1000,
       gasUsed: Number(r.gasUsed),
       l1FeeWei: l1Fee != null ? l1Fee.toString() : undefined,
+      status: r.status === "success" ? "success" : "reverted",
     };
   });
 }
 
-export const setAllowed = (t: string | undefined, account: Hex, ref: string) =>
-  write(t, "setAllowed", [account, true, refToBytes32(ref)]);
-export const mint = (t: string | undefined, to: Hex, cents: number, ref: string) =>
-  write(t, "mint", [to, BigInt(cents), refToBytes32(ref)]);
-export const burn = (t: string | undefined, from: Hex, cents: number, ref: string) =>
-  write(t, "burn", [from, BigInt(cents), refToBytes32(ref)]);
-export const transfer = (t: string | undefined, from: Hex, to: Hex, cents: number, ref: string) =>
-  write(t, "controllerTransfer", [from, to, BigInt(cents), refToBytes32(ref)]);
+const ref32 = refToBytes32;
 
-export async function balanceOf(token: string | undefined, account: Hex) {
+export const onboard = (run: RunContracts, account: Hex, ref: string) =>
+  write(contract(run, "dvp"), dvpSettlementAbi, "onboard", [account, ref32(ref)]);
+export const issueBond = (run: RunContracts, issuer: Hex, units: number, ref: string) =>
+  write(contract(run, "bond"), bondTokenAbi, "issue", [issuer, BigInt(units), ref32(ref)]);
+export const mintCash = (run: RunContracts, to: Hex, cents: number, ref: string) =>
+  write(contract(run, "cash"), depositTokenAbi, "mint", [to, BigInt(cents), ref32(ref)]);
+export const burnCash = (run: RunContracts, from: Hex, cents: number, ref: string) =>
+  write(contract(run, "cash"), depositTokenAbi, "burn", [from, BigInt(cents), ref32(ref)]);
+export const settleDvP = (run: RunContracts, tradeId: string, seller: Hex, buyer: Hex, units: number, price: number, allowRevert?: boolean) =>
+  write(contract(run, "dvp"), dvpSettlementAbi, "settle", [ref32(tradeId), seller, buyer, BigInt(units), BigInt(price)], allowRevert);
+export const payCoupon = (run: RunContracts, holders: Hex[], ref: string) =>
+  write(contract(run, "dvp"), dvpSettlementAbi, "payCoupon", [holders, ref32(ref)]);
+
+async function balance(address: Address, account: Hex) {
   const c = await ctx();
-  const address = tokenAddress(token);
   const v = await fresh((blockNumber) =>
     c.l2.readContract({ address, abi: depositTokenAbi, functionName: "balanceOf", args: [account], blockNumber }),
   );
   return Number(v);
 }
+
+export const cashBalance = (run: RunContracts, account: Hex) => balance(contract(run, "cash"), account);
+export const bondBalance = (run: RunContracts, account: Hex) => balance(contract(run, "bond"), account);
 
 // ------------------------------------------------------------------ status
 
@@ -373,7 +413,7 @@ async function readGames(l1: PublicClient, dgf: Address, head: { number: bigint;
   return out;
 }
 
-export async function status(requestedToken?: string): Promise<ChainStatus> {
+export async function status(run?: RunContracts): Promise<ChainStatus> {
   const c = await ctx();
   const [l1Head, l1Safe, l1Fin, l2Head, l2Safe, l2Fin, gwBal] = await Promise.all([
     c.l1.getBlock({ blockTag: "latest" }),
@@ -400,14 +440,14 @@ export async function status(requestedToken?: string): Promise<ChainStatus> {
     });
   } else notes.push("DisputeGameFactory unknown - set OP_NODE_RPC_URL or DISPUTE_GAME_FACTORY_ADDRESS.");
 
-  let token: ChainStatus["token"];
-  const addr = requestedToken;
-  if (addr && isAddress(addr)) {
+  const supplyOf = async (addr?: string) => {
+    if (!addr || !isAddress(addr)) return undefined;
     const supply = await fresh((blockNumber) =>
       c.l2.readContract({ address: addr, abi: depositTokenAbi, functionName: "totalSupply", blockNumber }),
     ).catch(() => undefined);
-    if (supply !== undefined) token = { address: addr, totalSupply: Number(supply) };
-  }
+    return supply === undefined ? undefined : { address: addr as Hex, totalSupply: Number(supply) };
+  };
+  const [cash, bond] = await Promise.all([supplyOf(run?.cash), supplyOf(run?.bond)]);
 
   return {
     kind: "live",
@@ -429,7 +469,8 @@ export async function status(requestedToken?: string): Promise<ChainStatus> {
       finalized: Number(l2Fin.number),
       explorer: env("L2_EXPLORER_URL"),
     },
-    token,
+    cash,
+    bond,
     gateway: { address: c.account.address, balanceEth: formatEther(gwBal) },
     batches: batchCache.map((b) => ({ ...b })),
     proposals,

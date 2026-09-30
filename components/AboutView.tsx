@@ -1,10 +1,10 @@
 import { SIM_PARAMS } from "@/lib/chain/simulated";
 
 const rows: [string, string, string][] = [
-  ["Customer & channel", "S-App, Online-Banking, Filiale", "Initiates orders; never talks to the chain directly."],
-  ["OSPlus (simulated)", "Kunden, Girokonten, Sperren, Buchungsjournal, one Sammelkonto per Sparkasse", "System of record for fiat and customer data. Emits business events (outbox) and accepts bookings via API."],
+  ["Clients & channel", "Issuer and investor via Firmenkundenportal, treasury systems or relationship manager", "Initiate issuance, trades and redemptions; never talk to the chain directly."],
+  ["OSPlus (simulated)", "Firmenkunden, Geschäftskonten, Depots, Sperren, Buchungsjournal, one Sammelkonto per Sparkasse", "System of record for fiat and customer data. Emits business events (outbox) and accepts bookings via API."],
   ["Abstraction layer", "Sparkassen Chain Gateway: saga orchestrator, compliance, custody/HSM, reconciliation", "Anti-corruption layer. Maps OSPlus concepts (IBAN, Buchung, EndToEndId) to ledger commands and back. Only component with chain keys."],
-  ["OP Stack L2", "OP Sepolia (live) or simulated: sequencer, op-batcher, op-proposer, S-EUR contract", "Token ledger with ~2s blocks. In production this would be the Sparkassen's own OP Stack chain, run by or for the Sparkassen-Finanzgruppe."],
+  ["OP Stack L2", "OP Sepolia (live) or simulated: sequencer, op-batcher, op-proposer, S-EUR cash token, bond register (eWpG), DvP contract", "Settlement ledger for cash and securities with ~2s blocks. In production this would be the Sparkassen's own OP Stack chain, run by or for the Sparkassen-Finanzgruppe."],
   ["RL1 (Regulated Layer One)", "EVM-based, here Sepolia: BatchInbox (blobs), DisputeGameFactory, OptimismPortal", "Data availability and settlement: L2 blocks become final with L1 finality, and state roots can be challenged for 3.5 days."],
 ];
 
@@ -37,7 +37,7 @@ export function AboutView() {
         </ol>
         <p className="mt-2">
           Separately, op-proposer posts the L2 <b>output root</b> to a dispute game. After the challenge window (3.5 days, plus a further delay before withdrawals)
-          the state is provable on L1, which is only needed to move assets <i>from L2 to L1</i>, not for payments between customers.
+          the state is provable on L1, which is only needed to move assets <i>from L2 to L1</i>, not for settling trades on the L2.
         </p>
       </section>
 
@@ -58,6 +58,7 @@ export function AboutView() {
           <li><b>Regulatory classification</b>: tokenized commercial-bank deposit (deposit guarantee applies) vs. e-money token under MiCA; BaFin, DORA outsourcing and ICT risk for sequencer/DA operators.</li>
           <li><b>Sequencer operation</b>: run by FI (or a Verbund entity) in its data centres; permissioned dispute games; key management in HSMs.</li>
           <li><b>OSPlus integration</b>: real event streaming (outbox/CDC), idempotency on EndToEndId, end-of-day reconciliation, cut-off times, Storno handling.</li>
+          <li><b>eWpG setup</b>: the crypto securities register must be kept by a BaFin-licensed registrar (Kryptowertpapierregisterführung); the bond terms are deposited with it; custody of crypto securities is a licensed activity (Kryptoverwahrung). The Sparkassen&apos;s existing securities processing (dwpbank) would need to be connected.</li>
           <li><b>Interoperability</b>: interbank settlement between Sparkassen/Landesbanken and with the digital euro or wholesale CBDC settlement.</li>
         </ul>
       </section>

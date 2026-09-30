@@ -8,7 +8,7 @@ import { cn } from "./ui";
 export function OsplusView() {
   const s = useDemo();
   const { osplus, gateway } = s.engine();
-  const { konten, kunden, journal, sperren } = osplus.state;
+  const { konten, kunden, journal, sperren, depots, wpJournal } = osplus.state;
 
   return (
     <div className="scroll-thin h-full space-y-4 overflow-y-auto p-3">
@@ -37,7 +37,7 @@ export function OsplusView() {
                     const verf = osplus.verfuegbar(k.iban);
                     const wallet = kunde && gateway.wallets.get(kunde.kundennr);
                     return (
-                      <tr key={k.iban} className={cn(k.produkt !== "Girokonto" && "bg-slate-50")}>
+                      <tr key={k.iban} className={cn(k.produkt !== "Geschäftskonto" && "bg-slate-50")}>
                         <td className="px-3 py-1.5">
                           <div className="font-mono text-[11px]">{fmtIban(k.iban)}</div>
                           <div className="text-[10.5px] text-slate-500">{k.produkt}</div>
@@ -85,6 +85,58 @@ export function OsplusView() {
           </div>
         </section>
       )}
+
+      <section>
+        <h4 className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Depots (securities accounts)</h4>
+        {!depots.length ? (
+          <p className="text-sm text-slate-500">No securities positions yet.</p>
+        ) : (
+          <div className="grid gap-3 lg:grid-cols-2">
+            <table className="w-full text-[12px]">
+              <thead>
+                <tr className="text-left text-[10px] uppercase tracking-wide text-slate-400">
+                  <th className="py-1 pr-2 font-medium">Depot</th>
+                  <th className="py-1 pr-2 font-medium">Client</th>
+                  <th className="py-1 pr-2 font-medium">ISIN</th>
+                  <th className="py-1 text-right font-medium">Stück</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {depots.map((d) => (
+                  <tr key={d.depot + d.isin}>
+                    <td className="py-1 pr-2 font-mono text-[11px]">{d.depot}</td>
+                    <td className="py-1 pr-2">{kunden.find((k) => k.kundennr === d.kundennr)?.name}</td>
+                    <td className="py-1 pr-2 font-mono text-[11px]">{d.isin}</td>
+                    <td className="py-1 text-right font-medium tabular-nums">{d.stueck}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <table className="w-full text-[12px]">
+              <thead>
+                <tr className="text-left text-[10px] uppercase tracking-wide text-slate-400">
+                  <th className="py-1 pr-2 font-medium">Buchung</th>
+                  <th className="py-1 pr-2 font-medium">Depot</th>
+                  <th className="py-1 pr-2 font-medium">Text</th>
+                  <th className="py-1 text-right font-medium">Stück</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {wpJournal.map((b) => (
+                  <tr key={b.id} className="row-in">
+                    <td className="py-1 pr-2 font-mono text-[11px]">{b.id}</td>
+                    <td className="py-1 pr-2 font-mono text-[11px]">{b.depot}</td>
+                    <td className="py-1 pr-2">{b.text}</td>
+                    <td className={cn("py-1 text-right font-medium tabular-nums", b.stueck < 0 ? "text-red-700" : "text-emerald-700")}>
+                      {b.stueck > 0 ? `+${b.stueck}` : b.stueck}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
 
       <section>
         <h4 className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Buchungsjournal</h4>

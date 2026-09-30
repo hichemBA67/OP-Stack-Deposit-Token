@@ -2,27 +2,30 @@
  * Sparkassen Chain Gateway - the abstraction layer.
  *
  * An anti-corruption layer between OSPlus and the ledger:
- *  - translates core-banking business events (Kunde angelegt, Umbuchung, ...)
- *    into ledger commands (allowlist, mint, transfer, burn) and back
- *  - owns compliance checks, custody (wallet per IBAN), idempotent references
+ *  - translates core-banking business events (Kunde angelegt, Emission, Kauf, ...)
+ *    into ledger commands (onboard, issue, mint, DvP, coupon, burn) and back
+ *  - owns compliance checks, custody (wallet per client), idempotent references
+ *  - acts as registrar ("registerführende Stelle") of the eWpG crypto securities register
  *  - runs each business process as a saga with compensation (hold -> mint -> book)
- *  - tracks L2 -> L1 settlement of every tx and reconciles ledger vs. OSPlus
+ *  - tracks L2 -> RL1 settlement of every tx and reconciles cash and securities vs. OSPlus
  *
  * It depends only on the ChainAdapter interface, never on a specific chain.
  * Every emitted message carries a plain-language `explain` for the walkthrough.
  */
+import { BOND, COUPON_PER_UNIT } from "../bond";
 import { fmtEur, short } from "../format";
-import { GV, INSTITUTE, type OsplusSimulator } from "../osplus/simulator";
-import type { ChainAdapter, ChainStatus, ProposalInfo, TxReceipt } from "../chain/types";
+import { GV, INSTITUTE, type Kunde, type OsplusSimulator } from "../osplus/simulator";
+import type { ChainAdapter, ChainStatus, Contracts, ProposalInfo, TxReceipt } from "../chain/types";
 import type { Component, Hex, Layer, Level, SettlementStage, StepId, TraceEvent } from "../types";
 
-export const TOKENIZE_LIMIT_CENTS = 10_000_00;
+export const TOKENIZE_LIMIT_CENTS = 1_000_000_00;
 
 export interface TrackedTx {
   hash: Hex;
   l2Block: number;
   l2Timestamp: number;
   label: string;
+  kind: ChainTx["kind"];
   step: StepId;
   stage: SettlementStage;
   batchTx?: Hex;
@@ -40,9 +43,19 @@ export interface TrackedTx {
 
 export interface ReconReport {
   ts: number;
-  totalSupply: number;
-  omnibusTotal: number;
-  perInstitut: { institutId: string; name: string; omnibus: number; onChain: number }[];
+  cash: {
+    totalSupply: number;
+    omnibusTotal: number;
+    perInstitut: { institutId: string; name: string; omnibus: number; onChain: number }[];
+    ok: boolean;
+  };
+  securities: {
+    isin: string;
+    registerTotal: number;
+    osplusTotal: number;
+    perKunde: { kundennr: string; name: string; depot: string; osplus: number; onChain: number }[];
+    ok: boolean;
+  };
   ok: boolean;
 }
 
@@ -50,13 +63,15 @@ export interface ReconReport {
 export interface ChainTx {
   id: number;
   chain: "l2" | "l1";
-  kind: "deploy" | "allowlist" | "mint" | "transfer" | "burn" | "batch" | "proposal";
+  kind: "deploy" | "config" | "onboard" | "issue" | "mint" | "dvp" | "coupon" | "burn" | "batch" | "proposal";
   title: string;
   hash?: Hex;
   address?: Hex;
   block?: number;
   ts: number;
   step: StepId;
+  /** The tx reverted on purpose (failing-trade demo). */
+  failed?: boolean;
   /** Business transactions this RL1 tx anchors (batch / dispute game). */
   covers?: string[];
 }
@@ -74,15 +89,27 @@ type Extra = Partial<Pick<TraceEvent, "protocol" | "endpoint" | "payload" | "lin
 const covers = (p: ProposalInfo, t: TrackedTx) =>
   p.l2Block !== undefined ? p.l2Block >= t.l2Block : (p.l2Timestamp ?? 0) >= t.l2Timestamp;
 
+const units = (n: number) => `${n} bond${n === 1 ? "" : "s"}`;
+
 export class Gateway {
   wallets = new Map<string, Hex>(); // kundennr -> wallet
   tracked: TrackedTx[] = [];
   /** Every real transaction, newest first. */
   txs: ChainTx[] = [];
   explorers: Explorers = {};
-  tokenAddress?: Hex;
-  private txSeq = 0;
+  contracts?: Contracts;
   lastRecon?: ReconReport;
+  /** Outcome of the failing-trade demo, if run. */
+  failedTrade?: { hash: Hex; buyer: string; price: number; units: number };
+  /** What each business step did, for the executive summaries (not the current balances). */
+  facts: {
+    issued?: { issuer: string; units: number };
+    tokenized?: { client: string; cents: number };
+    trade?: { seller: string; buyer: string; units: number; price: number };
+    coupon?: { total: number; holders: { name: string; units: number; amount: number }[] };
+    redeemed?: { client: string; cents: number };
+  } = {};
+  private txSeq = 0;
   private seq = 0;
   private step: StepId = "onboard";
   private lastStatus?: ChainStatus;
@@ -111,25 +138,26 @@ export class Gateway {
     this.txs.unshift({ id: ++this.txSeq, ts: Date.now(), step: this.step, ...tx });
   }
 
-  private receipt(r: TxReceipt, what: string, kind: ChainTx["kind"], title: string) {
+  private receipt(r: TxReceipt, what: string, kind: ChainTx["kind"], title: string, components: Component[] = ["sequencer"]) {
     this.recordTx({ chain: "l2", kind, title, hash: r.hash, block: r.l2Block });
-    const fee = r.l1FeeWei ? ` The sequencer charged an L1 data fee of ${(Number(r.l1FeeWei) / 1e9).toFixed(2)} gwei to cover posting it to RL1 later.` : "";
+    const fee = r.l1FeeWei ? ` The sequencer charged an L1 data fee of ${(Number(r.l1FeeWei) / 1e9).toFixed(2)} gwei to cover publishing it on RL1 later.` : "";
     this.emit(
       "l2",
       "gateway",
-      ["sequencer", "token"],
+      components,
       `${what}: confirmed in L2 block #${r.l2Block}`,
-      `The sequencer put the transaction into a block. The customer can already see the result. Its status is 'unsafe' until the data is published on RL1.${fee}`,
+      `The sequencer put the transaction into a block. The result is visible immediately. It becomes final once the block is anchored on RL1.${fee}`,
       { protocol: "JSON-RPC", endpoint: "eth_getTransactionReceipt", payload: r, link: this.txLink(r.hash), level: "success" },
     );
   }
 
-  private track(r: TxReceipt, label: string, submittedAt: number) {
+  private track(r: TxReceipt, label: string, kind: ChainTx["kind"], submittedAt: number) {
     this.tracked.unshift({
       hash: r.hash,
       l2Block: r.l2Block,
       l2Timestamp: r.l2Timestamp,
       label,
+      kind,
       step: this.step,
       stage: "unsafe",
       submittedAt,
@@ -139,7 +167,7 @@ export class Gateway {
 
   private walletOf(kundennr: string) {
     const w = this.wallets.get(kundennr);
-    if (!w) throw new Error(`Customer ${kundennr} has no wallet yet (not onboarded)`);
+    if (!w) throw new Error(`Client ${kundennr} has no wallet yet (not onboarded)`);
     return w;
   }
 
@@ -148,61 +176,91 @@ export class Gateway {
     return new Error(msg);
   }
 
+  private inst(id: string) {
+    return this.osplus.institut(id).name;
+  }
+
+  /** Cash moved on the chain between clients of two Sparkassen: move the backing between their Sammelkonten. */
+  private rebalance(from: Kunde, to: Kunde, cents: number, ref: string, why: string) {
+    if (from.institutId === to.institutId || cents <= 0) return;
+    const oa = this.osplus.omnibus(from.institutId);
+    const ob = this.osplus.omnibus(to.institutId);
+    this.osplus.umbuchung(oa.iban, ob.iban, cents, GV.INTERBANK, `Interbankausgleich S-EUR (${why})`, ref);
+    this.emit("gateway", "osplus", ["omnibus", "journal"],
+      `Move backing ${fmtEur(cents)}: ${this.inst(from.institutId)} → ${this.inst(to.institutId)}`,
+      `The cash changed hands between clients of two different Sparkassen, so the euros backing it move between their Sammelkonten (in reality via the Girozentrale / Landesbank clearing).`,
+      { protocol: "REST", endpoint: "POST /osplus/v1/umbuchungen", payload: { from: oa.iban, to: ob.iban, amount: cents, ref }, level: "success" });
+  }
+
   // ------------------------------------------------------------ lifecycle
 
   async bootstrap() {
     this.step = "onboard";
-    this.emit("gateway", "l2", ["orchestrator", "token"], "Deploy the S-EUR token contract for this run",
-      "Before the first customer, the gateway deploys the S-EUR smart contract on the L2. It starts empty, like the simulated OSPlus. The gateway becomes the only address allowed to mint and burn.",
-      { protocol: "JSON-RPC", endpoint: "eth_getCode / contract creation" });
+    this.emit("gateway", "l2", ["orchestrator", "token", "bond", "dvp"], "Deploy this run's contracts: cash token, bond register, DvP",
+      "Before the first client, the gateway deploys three smart contracts on the L2: the S-EUR cash token, the bond register and the DvP settlement contract, and authorises the DvP contract to move both. All start empty, like the simulated OSPlus.",
+      { protocol: "JSON-RPC", endpoint: "contract creation × 3, setGateway × 2" });
     const r = await this.chain.init();
-    this.tokenAddress = r.tokenAddress;
-    if (this.chain.kind === "live") {
-      this.recordTx({ chain: "l2", kind: "deploy", title: "Deploy the S-EUR token contract (fresh for this run)", hash: r.txHash, address: r.tokenAddress });
+    this.contracts = r.contracts;
+    for (const tx of r.txs) {
+      this.recordTx({ chain: "l2", kind: tx.address ? "deploy" : "config", title: tx.label, hash: tx.hash, address: tx.address });
     }
-    this.emit("l2", "gateway", ["token"],
-      r.deployed ? `S-EUR contract deployed at ${short(r.tokenAddress)}` : `S-EUR contract found at ${short(r.tokenAddress)}`,
-      r.deployed ? "The token contract is now live on the L2. Its address is the bank's 'digital euro ledger'." : "The contract already exists from an earlier run, so it's reused.",
-      { payload: r, level: "success", link: r.txHash ? this.txLink(r.txHash) : undefined });
+    this.emit("l2", "gateway", ["token", "bond", "dvp"],
+      `Contracts ready: S-EUR ${short(r.contracts.cash)}, bond ${short(r.contracts.bond)}, DvP ${short(r.contracts.dvp)}`,
+      "The gateway is the registrar of the bond register and the only minter of S-EUR. The DvP contract may move bonds and cash, but only when the gateway instructs it.",
+      { payload: r, level: "success" });
   }
 
-  async onboard(name: string, institutId: string) {
+  async onboard(name: string, institutId: string, rolle: Kunde["rolle"], anfangssaldo: number) {
     this.step = "onboard";
-    const inst = INSTITUTE.find((i) => i.id === institutId)!;
-    this.emit("customer", "osplus", ["channel", "kyc"], `${name} opens a Girokonto at ${inst.name}`,
-      "The customer is identified (Legitimation / KYC) as with any new account. Nothing blockchain-specific happens for them.",
-      { protocol: "Branch / app", endpoint: "Kundenanlage" });
-    const kunde = this.osplus.kundeAnlegen(name, institutId);
-    this.emit("osplus", "gateway", ["kyc", "giro", "api"], `OSPlus: customer ${kunde.kundennr} created, IBAN ${kunde.girokonto}`,
-      "OSPlus publishes a 'customer created' business event. The gateway subscribes to these events, so OSPlus doesn't need to know anything about blockchains.",
+    const inst = this.inst(institutId);
+    this.emit("customer", "osplus", ["channel", "kyc"], `${name} onboarded at ${inst} (${rolle === "Emittent" ? "issuer" : "investor"})`,
+      "An existing corporate client of the Sparkasse is enabled for tokenized securities: business account (Geschäftskonto) and securities account (Depot) in OSPlus, identification of the company and its beneficial owners (KYB).",
+      { protocol: "Firmenkundenportal / Berater", endpoint: "Kundenanlage + Depoteröffnung" });
+    const ref = this.nextRef("KYB");
+    const kunde = this.osplus.kundeAnlegen(name, institutId, rolle, anfangssaldo, ref);
+    this.emit("osplus", "gateway", ["kyc", "giro", "depot", "api"], `OSPlus: client ${kunde.kundennr}, Geschäftskonto ${kunde.girokonto}, Depot ${kunde.depot}`,
+      `OSPlus publishes a 'client created' event. The Geschäftskonto starts with the client's existing deposits of ${fmtEur(anfangssaldo)}.`,
       { protocol: "Event (outbox → stream)", endpoint: "osplus.kunden.v1.KundeAngelegt", payload: kunde });
     this.emit("gateway", "gateway", ["compliance"], "Compliance checks passed",
-      "Before any wallet is created, the gateway re-checks KYC status, sanctions lists and PEP screening.");
+      rolle === "Investor"
+        ? "KYB, sanctions screening and the MiFID client classification (professional client) are checked before the client may buy securities."
+        : "KYB, sanctions screening and the issuer approval (terms, prospectus exemption) are checked before the client may issue securities.");
     const wallet = await this.chain.provisionWallet(kunde.girokonto);
     this.wallets.set(kunde.kundennr, wallet);
     this.emit("gateway", "gateway", ["custody"], `Wallet ${short(wallet)} created for ${name}`,
-      "A key pair is derived from the IBAN inside the bank's key store (HSM). The bank holds the key, so the customer never has to manage a crypto wallet.",
-      { payload: { iban: kunde.girokonto, wallet } });
-    const ref = this.nextRef("KYC");
-    this.emit("gateway", "l2", ["orchestrator", "sequencer", "token"], `Allowlist wallet ${short(wallet)} on S-EUR`,
-      "The gateway sends a transaction to the token contract to mark this wallet as verified. Only allowlisted wallets can hold or move S-EUR.",
-      { protocol: "JSON-RPC", endpoint: "eth_sendRawTransaction → setAllowed()", payload: { account: wallet, ref } });
-    const r = await this.chain.setAllowed(wallet, ref);
-    this.receipt(r, "Allowlisting", "allowlist", `Allowlist ${name}'s wallet`);
+      "A key pair is derived for the client inside the bank's key store (HSM). The bank holds the key, so the client never manages a crypto wallet.",
+      { payload: { kundennr: kunde.kundennr, wallet } });
+    this.emit("gateway", "l2", ["orchestrator", "sequencer", "dvp", "bond", "token"], `Allowlist ${name} on the bond register and the cash token`,
+      "One transaction marks the wallet as verified on both contracts. Only allowlisted wallets can hold the bond or S-EUR.",
+      { protocol: "JSON-RPC", endpoint: "eth_sendRawTransaction → DvPSettlement.onboard()", payload: { account: wallet, ref } });
+    const r = await this.chain.onboard(wallet, ref);
+    this.receipt(r, "Allowlisting", "onboard", `Allowlist ${name} (bond + cash)`, ["sequencer", "dvp"]);
     return kunde;
   }
 
-  async fund(kundennr: string, cents: number) {
-    this.step = "fund";
-    const k = this.osplus.kunde(kundennr);
-    const ref = this.nextRef("SEPA");
-    this.emit("customer", "osplus", ["giro", "journal"], `SEPA credit of ${fmtEur(cents)} for ${k.name}`,
-      "A normal bank transfer arrives through the SEPA payment system, the same as a salary payment today.",
-      { protocol: "SEPA credit transfer (pacs.008)", endpoint: "OSPlus Zahlungsverkehr" });
-    const b = this.osplus.sepaGutschrift(k.girokonto, cents, "Arbeitgeber GmbH", ref);
-    this.emit("osplus", "osplus", ["journal", "giro"], `Booked ${b.id}: +${fmtEur(cents)} on the Girokonto`,
-      "OSPlus books the credit (GV code 166 = SEPA credit). These euros can now be tokenized.",
-      { payload: b, level: "success" });
+  async issue(issuerK: string, n: number) {
+    this.step = "issue";
+    const k = this.osplus.kunde(issuerK);
+    const wallet = this.walletOf(issuerK);
+    const ref = this.nextRef("ISS");
+    this.emit("customer", "gateway", ["channel", "orchestrator"], `${k.name} issues ${units(n)}: ${BOND.name}`,
+      `The issuer instructs the issuance of ${fmtEur(n * BOND.nominalCents)} nominal (${units(n)} of ${fmtEur(BOND.nominalCents)}, ${BOND.couponBps / 100}% p.a., maturity ${BOND.maturity}, ISIN ${BOND.isin}).`,
+      { protocol: "Issuance mandate", endpoint: "POST /gateway/v1/issuances", payload: { ...BOND, units: n } });
+    if (k.rolle !== "Emittent") throw this.fail("Rejected: client is not an approved issuer", "Only approved issuers may issue securities.");
+    this.emit("gateway", "gateway", ["compliance", "orchestrator"], "Registrar checks passed: terms deposited, issuer approved",
+      "Under the German eWpG, a crypto security comes into existence when it is entered into a crypto securities register. The registrar (here the gateway, in reality a BaFin-licensed register keeper) checks the terms before the entry.");
+    this.emit("gateway", "l2", ["sequencer", "bond"], `Register entry: ${units(n)} in the name of ${k.name}`,
+      "The bond register records the new bonds in the issuer's name. They are now ready to be placed with investors.",
+      { protocol: "JSON-RPC", endpoint: "eth_sendRawTransaction → BondToken.issue()", payload: { issuer: wallet, units: n, ref } });
+    const t0 = Date.now();
+    const r = await this.chain.issueBond(wallet, n, ref);
+    this.receipt(r, `Issuance ${units(n)}`, "issue", `Issue ${units(n)} ${BOND.symbol} → ${k.name}`, ["sequencer", "bond"]);
+    this.track(r, `Issue ${units(n)} → ${k.name}`, "issue", t0);
+    const wp = this.osplus.depotBuchung(issuerK, BOND.isin, n, `Emission ${BOND.symbol} (Platzierungsbestand)`, ref);
+    this.facts.issued = { issuer: k.name, units: (this.facts.issued?.units ?? 0) + n };
+    this.emit("gateway", "osplus", ["depot"], `OSPlus Depot ${k.depot}: +${units(n)} (placement holding)`,
+      "OSPlus mirrors the register entry in the issuer's Depot, so the securities view in core banking matches the register.",
+      { protocol: "REST", endpoint: "POST /osplus/v1/depots/{depot}/buchungen", payload: wp, level: "success" });
   }
 
   async tokenize(kundennr: string, cents: number) {
@@ -210,84 +268,125 @@ export class Gateway {
     const k = this.osplus.kunde(kundennr);
     const wallet = this.walletOf(kundennr);
     const ref = this.nextRef("TOK");
-    this.emit("customer", "osplus", ["channel", "giro"], `${k.name} wants ${fmtEur(cents)} as S-EUR`,
-      "The customer requests the conversion in the app. The order goes to OSPlus like any other order.",
-      { protocol: "App order", endpoint: "Auftrag Tokenisierung" });
-    this.emit("osplus", "gateway", ["api", "orchestrator"], `OSPlus forwards the order to the gateway`,
-      "OSPlus calls the gateway's API. The EndToEndId reference will travel with every following step, on both ledgers.",
+    this.emit("customer", "osplus", ["channel", "giro"], `${k.name} converts ${fmtEur(cents)} into S-EUR`,
+      "To pay on the chain, the investor needs cash on the chain: tokenized deposits (S-EUR) backed 1:1 by its Geschäftskonto money.",
+      { protocol: "Firmenkundenportal", endpoint: "Auftrag Tokenisierung" });
+    this.emit("osplus", "gateway", ["api", "orchestrator"], "OSPlus forwards the order to the gateway",
+      "The EndToEndId reference travels with every following step, on both ledgers.",
       { protocol: "REST", endpoint: "POST /gateway/v1/tokenizations", payload: { endToEndId: ref, iban: k.girokonto, amount: { value: cents / 100, currency: "EUR" } } });
-
-    if (k.kyc !== "verified") throw this.fail("Rejected: KYC not verified", "Only verified customers may hold S-EUR.");
-    if (cents > TOKENIZE_LIMIT_CENTS)
-      throw this.fail(`Rejected: above the ${fmtEur(TOKENIZE_LIMIT_CENTS)} limit per order`, "The gateway enforces per-order limits, as a bank would for any new product.");
+    if (cents > TOKENIZE_LIMIT_CENTS) throw this.fail(`Rejected: above the ${fmtEur(TOKENIZE_LIMIT_CENTS)} limit per order`, "The gateway enforces per-order limits.");
     if (this.osplus.verfuegbar(k.girokonto) < cents)
-      throw this.fail("Rejected: not enough money on the Girokonto", "You can only tokenize euros that are actually available. Fund the account first (step 2).");
-    this.emit("gateway", "gateway", ["compliance"], "Compliance checks passed",
-      "KYC, per-order limit and AML velocity checks passed. Now the three-step saga starts.");
+      throw this.fail("Rejected: not enough money on the Geschäftskonto", "You can only tokenize euros that are actually available.");
+    this.emit("gateway", "gateway", ["compliance"], "Compliance checks passed", "Limit and AML checks passed. Now the three-step saga starts.");
 
     const hold = this.osplus.sperreSetzen(k.girokonto, cents, "Tokenisierung", ref);
     this.emit("gateway", "osplus", ["hold", "giro"], `Saga step 1/3: reserve ${fmtEur(cents)} (Sperre ${hold.id})`,
-      "The amount is blocked on the Girokonto, so it can't be spent elsewhere while the tokens are created. The balance hasn't moved yet.",
-      { protocol: "REST", endpoint: `POST /osplus/v1/konten/{iban}/sperren`, payload: hold });
-
+      "The amount is blocked on the Geschäftskonto so it can't be spent elsewhere while the tokens are created.",
+      { protocol: "REST", endpoint: "POST /osplus/v1/konten/{iban}/sperren", payload: hold });
     this.emit("gateway", "l2", ["orchestrator", "sequencer", "token"], `Saga step 2/3: mint ${fmtEur(cents)} S-EUR`,
-      "The gateway asks the token contract to create new S-EUR in the customer's wallet. Only the gateway is allowed to do this.",
-      { protocol: "JSON-RPC", endpoint: "eth_sendRawTransaction → mint()", payload: { to: wallet, value: cents, ref } });
+      "The gateway asks the cash token to create new S-EUR in the client's wallet. Only the gateway may do this.",
+      { protocol: "JSON-RPC", endpoint: "eth_sendRawTransaction → TokenizedDeposit.mint()", payload: { to: wallet, value: cents, ref } });
     let r: TxReceipt;
     const t0 = Date.now();
     try {
-      r = await this.chain.mint(wallet, cents, ref);
+      r = await this.chain.mintCash(wallet, cents, ref);
     } catch (e) {
       this.osplus.sperreAufloesen(hold.id);
       this.emit("gateway", "osplus", ["hold"], `Rolled back: reservation ${hold.id} released`,
-        "The mint failed, so the saga undoes step 1. The customer's money is fully available again and no tokens exist.", { level: "warn" });
+        "The mint failed, so the saga undoes step 1. The money is fully available again and no tokens exist.", { level: "warn" });
       throw this.fail(`Mint failed: ${(e as Error).message}`, "The blockchain transaction did not succeed.");
     }
-    this.receipt(r, `Mint ${fmtEur(cents)}`, "mint", `Mint ${fmtEur(cents)} S-EUR → ${k.name}`);
-    this.track(r, `Mint ${fmtEur(cents)} → ${k.name}`, t0);
-
+    this.receipt(r, `Mint ${fmtEur(cents)}`, "mint", `Mint ${fmtEur(cents)} S-EUR → ${k.name}`, ["sequencer", "token"]);
+    this.track(r, `Mint ${fmtEur(cents)} → ${k.name}`, "mint", t0);
     const omni = this.osplus.omnibus(k.institutId);
     const [soll] = this.osplus.umbuchung(k.girokonto, omni.iban, cents, GV.TOKENISIERUNG, `Tokenisierung S-EUR ${short(r.hash)}`, ref);
     this.osplus.sperreAufloesen(hold.id);
-    this.emit("gateway", "osplus", ["giro", "omnibus", "journal"], `Saga step 3/3: book ${fmtEur(cents)} Girokonto → Sammelkonto`,
-      "Now that the tokens exist, OSPlus moves the euros to the Sammelkonto that backs all S-EUR, and lifts the reservation. Tokens and backing are now in sync.",
-      { protocol: "REST", endpoint: "POST /osplus/v1/umbuchungen", payload: { buchung: soll, txHash: r.hash, l2Block: r.l2Block }, level: "success" });
+    this.facts.tokenized = { client: k.name, cents };
+    this.emit("gateway", "osplus", ["giro", "omnibus", "journal"], `Saga step 3/3: book ${fmtEur(cents)} Geschäftskonto → Sammelkonto`,
+      "Now that the tokens exist, OSPlus moves the euros to the Sammelkonto that backs all S-EUR and lifts the reservation.",
+      { protocol: "REST", endpoint: "POST /osplus/v1/umbuchungen", payload: { buchung: soll, txHash: r.hash }, level: "success" });
   }
 
-  async transfer(fromK: string, toK: string, cents: number) {
-    this.step = "transfer";
-    const a = this.osplus.kunde(fromK);
-    const b = this.osplus.kunde(toK);
-    const wa = this.walletOf(fromK);
-    const wb = this.walletOf(toK);
-    const ref = this.nextRef("P2P");
-    this.emit("customer", "gateway", ["channel", "orchestrator"], `${a.name} pays ${b.name} ${fmtEur(cents)}`,
-      "The payment order goes from the app straight to the gateway. It's a token payment, so OSPlus isn't needed to execute it.",
-      { protocol: "App order", endpoint: "POST /gateway/v1/transfers", payload: { endToEndId: ref, from: a.girokonto, to: b.girokonto, amount: cents / 100 } });
-    const bal = await this.chain.balanceOf(wa);
-    if (bal < cents) throw this.fail(`Rejected: ${a.name} only has ${fmtEur(bal)} S-EUR`, "Tokenize more euros first (step 3).");
-    this.emit("gateway", "gateway", ["compliance", "custody"], "Checks passed, transaction signed",
-      "The gateway checks the balance and compliance rules, then signs the transfer with the sender's key from the HSM.");
-    this.emit("gateway", "l2", ["sequencer", "token"], `Transfer ${fmtEur(cents)} S-EUR ${short(wa)} → ${short(wb)}`,
-      "The token contract moves the S-EUR between two allowlisted wallets. It settles in one L2 block.",
-      { protocol: "JSON-RPC", endpoint: "eth_sendRawTransaction → controllerTransfer()", payload: { from: wa, to: wb, value: cents, ref } });
+  /** Atomic delivery versus payment of `n` bonds against `priceCents` S-EUR. */
+  async dvp(sellerK: string, buyerK: string, n: number, priceCents: number) {
+    this.step = "dvp";
+    const seller = this.osplus.kunde(sellerK);
+    const buyer = this.osplus.kunde(buyerK);
+    const ws = this.walletOf(sellerK);
+    const wb = this.walletOf(buyerK);
+    const tradeId = this.nextRef("DVP");
+    this.emit("customer", "gateway", ["channel", "orchestrator"], `Trade agreed: ${buyer.name} buys ${units(n)} from ${seller.name} for ${fmtEur(priceCents)}`,
+      `Placement of the new bond at ${((priceCents / (n * BOND.nominalCents)) * 100).toFixed(2)}% of nominal. Both sides confirmed the trade; the gateway receives the settlement instruction.`,
+      { protocol: "Settlement instruction", endpoint: "POST /gateway/v1/settlements", payload: { tradeId, isin: BOND.isin, units: n, price: priceCents / 100 } });
+    const [bonds, cash] = await Promise.all([this.chain.bondBalance(ws), this.chain.cashBalance(wb)]);
+    if (bonds < n) throw this.fail(`Rejected: ${seller.name} holds only ${units(bonds)}`, "The seller must hold the bonds it sells.");
+    if (cash < priceCents) throw this.fail(`Rejected: ${buyer.name} has only ${fmtEur(cash)} S-EUR`, "Tokenize enough cash first (step 3).");
+    this.emit("gateway", "gateway", ["compliance", "custody"], "Pre-settlement checks passed, instruction signed",
+      "Both parties are allowlisted, the seller holds the bonds and the buyer holds the cash. The gateway signs the instruction with the bank's keys.");
+    this.emit("gateway", "l2", ["sequencer", "dvp", "bond", "token"], `DvP: ${units(n)} → ${buyer.name}  ⇄  ${fmtEur(priceCents)} → ${seller.name}`,
+      "One transaction to the DvP contract moves the bonds (delivery) and the cash (payment). Either both legs succeed or the whole transaction reverts, so no one can end up with one side only.",
+      { protocol: "JSON-RPC", endpoint: "eth_sendRawTransaction → DvPSettlement.settle()", payload: { tradeId, seller: ws, buyer: wb, units: n, price: priceCents } });
     const t0 = Date.now();
-    const r = await this.chain.transfer(wa, wb, cents, ref);
-    this.receipt(r, `Transfer ${fmtEur(cents)}`, "transfer", `Transfer ${fmtEur(cents)} S-EUR ${a.name} → ${b.name}`);
-    this.track(r, `Transfer ${fmtEur(cents)} ${a.name} → ${b.name}`, t0);
+    const r = await this.chain.settleDvP(tradeId, ws, wb, n, priceCents);
+    this.receipt(r, `DvP ${units(n)} ⇄ ${fmtEur(priceCents)}`, "dvp", `DvP: ${units(n)} ⇄ ${fmtEur(priceCents)} (${seller.name} → ${buyer.name})`, ["sequencer", "dvp", "bond", "token"]);
+    this.track(r, `DvP ${units(n)} ⇄ ${fmtEur(priceCents)}`, "dvp", t0);
+    this.facts.trade = { seller: seller.name, buyer: buyer.name, units: n, price: priceCents };
+    this.osplus.depotBuchung(sellerK, BOND.isin, -n, `Verkauf ${BOND.symbol} DvP ${tradeId}`, tradeId);
+    this.osplus.depotBuchung(buyerK, BOND.isin, n, `Kauf ${BOND.symbol} DvP ${tradeId}`, tradeId);
+    this.emit("gateway", "osplus", ["depot", "journal"], `OSPlus Depots: ${seller.depot} −${n}, ${buyer.depot} +${n}`,
+      "OSPlus mirrors the delivery in both Depots and records the settlement for accounting and reporting.",
+      { protocol: "REST", endpoint: "POST /osplus/v1/depots/{depot}/buchungen", level: "success" });
+    this.rebalance(buyer, seller, priceCents, tradeId, `DvP ${tradeId}`);
+  }
 
-    if (a.institutId !== b.institutId) {
-      const oa = this.osplus.omnibus(a.institutId);
-      const ob = this.osplus.omnibus(b.institutId);
-      this.osplus.umbuchung(oa.iban, ob.iban, cents, GV.INTERBANK, `Interbankausgleich S-EUR ${short(r.hash)}`, ref);
-      this.emit("gateway", "osplus", ["omnibus", "journal"],
-        `Rebalance backing: ${fmtEur(cents)} from ${this.osplus.institut(a.institutId).name} to ${this.osplus.institut(b.institutId).name}`,
-        `${a.name} and ${b.name} bank with different Sparkassen. ${b.name}'s new tokens must be backed by ${this.osplus.institut(b.institutId).name}, so the euros move between the two Sammelkonten (in reality via the Girozentrale / Landesbank clearing).`,
-        { protocol: "REST", endpoint: "POST /osplus/v1/umbuchungen", payload: { from: oa.iban, to: ob.iban, amount: cents, ref }, level: "success" });
-    } else {
-      this.emit("gateway", "osplus", ["journal"], "Same Sparkasse: no rebalancing needed",
-        "Both customers bank with the same Sparkasse, so its Sammelkonto already backs both wallets. OSPlus only records the movement for reporting.", { level: "success" });
-    }
+  /** Demo of atomicity: a trade the buyer can't pay reverts completely. */
+  async dvpFailing(sellerK: string, buyerK: string, n: number) {
+    this.step = "dvp";
+    const seller = this.osplus.kunde(sellerK);
+    const buyer = this.osplus.kunde(buyerK);
+    const ws = this.walletOf(sellerK);
+    const wb = this.walletOf(buyerK);
+    const cash = await this.chain.cashBalance(wb);
+    const price = cash + 50_000_00;
+    const tradeId = this.nextRef("DVX");
+    this.emit("customer", "gateway", ["channel", "orchestrator"], `Test: ${buyer.name} tries to buy ${units(n)} for ${fmtEur(price)} but holds only ${fmtEur(cash)}`,
+      "What if the buyer can't pay? We deliberately send the trade to the chain without the gateway's pre-checks, to show that the DvP contract itself protects the seller.",
+      { protocol: "Settlement instruction (test)", endpoint: "POST /gateway/v1/settlements", payload: { tradeId, units: n, price: price / 100 } });
+    const before = await Promise.all([this.chain.bondBalance(ws), this.chain.cashBalance(wb)]);
+    const r = await this.chain.settleDvP(tradeId, ws, wb, n, price, true);
+    this.recordTx({ chain: "l2", kind: "dvp", title: `Failing trade (buyer can't pay): reverted, nothing moved`, hash: r.hash, block: r.l2Block, failed: r.status === "reverted" });
+    const after = await Promise.all([this.chain.bondBalance(ws), this.chain.cashBalance(wb)]);
+    const untouched = before[0] === after[0] && before[1] === after[1];
+    this.failedTrade = { hash: r.hash, buyer: buyer.name, price, units: n };
+    this.emit("l2", "gateway", ["dvp", "bond", "token"],
+      r.status === "reverted" ? `Reverted in L2 block #${r.l2Block}: nothing moved` : `Unexpected: trade did not revert`,
+      r.status === "reverted"
+        ? `${before[0] < n ? `${seller.name} doesn't hold the bonds and ${buyer.name} can't pay` : `${buyer.name} can't pay`}, so the whole transaction was undone${before[0] < n ? "" : ", including the bond delivery"}. ${seller.name} still holds ${units(after[0])}, ${buyer.name} still holds ${fmtEur(after[1])}${untouched ? "" : " (balances changed!)"}. No settlement risk.`
+        : "The trade should have reverted.",
+      { protocol: "JSON-RPC", endpoint: "eth_getTransactionReceipt (status 0)", payload: { ...r, before, after }, link: this.txLink(r.hash), level: r.status === "reverted" ? "warn" : "error" });
+  }
+
+  async coupon(issuerK: string, holderKs: string[]) {
+    this.step = "coupon";
+    const issuer = this.osplus.kunde(issuerK);
+    const holders = holderKs.filter((h) => h !== issuerK).map((h) => this.osplus.kunde(h));
+    const ref = this.nextRef("CPN");
+    const positions = await Promise.all(holders.map((h) => this.chain.bondBalance(this.walletOf(h.kundennr))));
+    const total = positions.reduce((a, u) => a + u * COUPON_PER_UNIT, 0);
+    this.emit("customer", "gateway", ["channel", "orchestrator"], `Coupon date: ${issuer.name} pays ${BOND.couponBps / 100}% on ${BOND.symbol}`,
+      `The annual coupon is due (in the demo we pay the first coupon right away). ${fmtEur(COUPON_PER_UNIT)} per bond, ${fmtEur(total)} in total.`,
+      { protocol: "Corporate action", endpoint: "POST /gateway/v1/coupons", payload: { isin: BOND.isin, perUnit: COUPON_PER_UNIT / 100, holders: holders.map((h, i) => ({ name: h.name, units: positions[i] })) } });
+    const cash = await this.chain.cashBalance(this.walletOf(issuerK));
+    if (cash < total) throw this.fail(`Rejected: issuer holds only ${fmtEur(cash)} S-EUR`, "The issuer needs enough S-EUR to pay the coupon.");
+    this.emit("gateway", "l2", ["sequencer", "dvp", "bond", "token"], `Pay coupon: ${fmtEur(total)} to ${holders.length} holder${holders.length === 1 ? "" : "s"}`,
+      "The DvP contract reads each holder's position from the bond register and pays position × coupon from the issuer's S-EUR, all in one transaction. The calculation happens on the chain, from the register itself.",
+      { protocol: "JSON-RPC", endpoint: "eth_sendRawTransaction → DvPSettlement.payCoupon()", payload: { holders: holders.map((h) => this.walletOf(h.kundennr)), ref } });
+    const t0 = Date.now();
+    const r = await this.chain.payCoupon(holders.map((h) => this.walletOf(h.kundennr)), ref);
+    this.receipt(r, `Coupon ${fmtEur(total)}`, "coupon", `Coupon ${fmtEur(total)}: ${issuer.name} → holders`, ["sequencer", "dvp", "token"]);
+    this.track(r, `Coupon ${fmtEur(total)}`, "coupon", t0);
+    this.facts.coupon = { total, holders: holders.map((h, i) => ({ name: h.name, units: positions[i], amount: positions[i] * COUPON_PER_UNIT })) };
+    holders.forEach((h, i) => this.rebalance(issuer, h, positions[i] * COUPON_PER_UNIT, ref, `Kupon ${BOND.symbol}`));
   }
 
   async redeem(kundennr: string, cents: number) {
@@ -295,50 +394,75 @@ export class Gateway {
     const k = this.osplus.kunde(kundennr);
     const wallet = this.walletOf(kundennr);
     const ref = this.nextRef("RED");
-    this.emit("customer", "gateway", ["channel", "orchestrator"], `${k.name} redeems ${fmtEur(cents)} S-EUR`,
-      "The customer wants euros back on the Girokonto. S-EUR is always redeemable 1:1.",
-      { protocol: "App order", endpoint: "POST /gateway/v1/redemptions" });
-    const bal = await this.chain.balanceOf(wallet);
+    this.emit("customer", "gateway", ["channel", "orchestrator"], `${k.name} takes ${fmtEur(cents)} back to its Geschäftskonto`,
+      "S-EUR is always redeemable 1:1 into normal account money.", { protocol: "Firmenkundenportal", endpoint: "POST /gateway/v1/redemptions" });
+    const bal = await this.chain.cashBalance(wallet);
     if (bal < cents) throw this.fail(`Rejected: ${k.name} only has ${fmtEur(bal)} S-EUR`, "You can only redeem tokens you hold.");
     this.emit("gateway", "l2", ["sequencer", "token"], `Burn ${fmtEur(cents)} S-EUR`,
-      "The tokens are destroyed first. That way the bank never pays out euros for tokens that still exist.",
-      { protocol: "JSON-RPC", endpoint: "eth_sendRawTransaction → burn()", payload: { from: wallet, value: cents, ref } });
+      "The tokens are destroyed first, so the bank never pays out euros for tokens that still exist.",
+      { protocol: "JSON-RPC", endpoint: "eth_sendRawTransaction → TokenizedDeposit.burn()", payload: { from: wallet, value: cents, ref } });
     const t0 = Date.now();
-    const r = await this.chain.burn(wallet, cents, ref);
-    this.receipt(r, `Burn ${fmtEur(cents)}`, "burn", `Burn ${fmtEur(cents)} S-EUR ← ${k.name}`);
-    this.track(r, `Burn ${fmtEur(cents)} ← ${k.name}`, t0);
+    const r = await this.chain.burnCash(wallet, cents, ref);
+    this.receipt(r, `Burn ${fmtEur(cents)}`, "burn", `Burn ${fmtEur(cents)} S-EUR ← ${k.name}`, ["sequencer", "token"]);
+    this.track(r, `Burn ${fmtEur(cents)} ← ${k.name}`, "burn", t0);
+    this.facts.redeemed = { client: k.name, cents };
     const omni = this.osplus.omnibus(k.institutId);
     this.osplus.umbuchung(omni.iban, k.girokonto, cents, GV.RUECKTAUSCH, `Rücktausch S-EUR ${short(r.hash)}`, ref);
-    this.emit("gateway", "osplus", ["omnibus", "giro", "journal"], `Book ${fmtEur(cents)} Sammelkonto → Girokonto`,
-      "With the tokens gone, the backing euros are released from the Sammelkonto to the customer's normal account.",
+    this.emit("gateway", "osplus", ["omnibus", "giro", "journal"], `Book ${fmtEur(cents)} Sammelkonto → Geschäftskonto`,
+      "With the tokens gone, the backing euros are released to the client's normal account.",
       { protocol: "REST", endpoint: "POST /osplus/v1/umbuchungen", level: "success" });
   }
 
   async reconcile(): Promise<ReconReport> {
     this.step = "reconcile";
-    this.emit("gateway", "l2", ["recon", "token"], "Read S-EUR supply and all customer balances from the L2",
-      "Read-only queries. Nothing is written, so no transaction or gas is needed.",
+    this.emit("gateway", "l2", ["recon", "token", "bond"], "Read cash supply, bond register and all positions from the L2",
+      "Read-only queries. Nothing is written, so no transaction is needed.",
       { protocol: "JSON-RPC", endpoint: "eth_call → totalSupply(), balanceOf()" });
     const st = await this.chain.status();
     this.lastStatus = st;
-    const perInstitut = [];
-    for (const inst of INSTITUTE) {
-      let onChain = 0;
-      for (const k of this.osplus.state.kunden.filter((k) => k.institutId === inst.id)) {
-        const w = this.wallets.get(k.kundennr);
-        if (w) onChain += await this.chain.balanceOf(w);
-      }
-      perInstitut.push({ institutId: inst.id, name: inst.name, omnibus: this.osplus.omnibus(inst.id).saldo, onChain });
+    const kunden = this.osplus.state.kunden.filter((k) => this.wallets.has(k.kundennr));
+    const cashOf = new Map<string, number>();
+    const bondOf = new Map<string, number>();
+    for (const k of kunden) {
+      const w = this.walletOf(k.kundennr);
+      const [c, b] = await Promise.all([this.chain.cashBalance(w), this.chain.bondBalance(w)]);
+      cashOf.set(k.kundennr, c);
+      bondOf.set(k.kundennr, b);
     }
+    const perInstitut = INSTITUTE.map((inst) => ({
+      institutId: inst.id,
+      name: inst.name,
+      omnibus: this.osplus.omnibus(inst.id).saldo,
+      onChain: kunden.filter((k) => k.institutId === inst.id).reduce((a, k) => a + (cashOf.get(k.kundennr) ?? 0), 0),
+    }));
     const omnibusTotal = perInstitut.reduce((a, p) => a + p.omnibus, 0);
-    const totalSupply = st.token?.totalSupply ?? 0;
-    const ok = omnibusTotal === totalSupply && perInstitut.every((p) => p.omnibus === p.onChain);
-    const report = { ts: Date.now(), totalSupply, omnibusTotal, perInstitut, ok };
+    const cashSupply = st.cash?.totalSupply ?? 0;
+    const cashOk = omnibusTotal === cashSupply && perInstitut.every((p) => p.omnibus === p.onChain);
+    const perKunde = kunden.map((k) => ({
+      kundennr: k.kundennr,
+      name: k.name,
+      depot: k.depot,
+      osplus: this.osplus.bestand(k.kundennr, BOND.isin),
+      onChain: bondOf.get(k.kundennr) ?? 0,
+    }));
+    const osplusTotal = perKunde.reduce((a, p) => a + p.osplus, 0);
+    const registerTotal = st.bond?.totalSupply ?? 0;
+    const secOk = registerTotal === osplusTotal && perKunde.every((p) => p.osplus === p.onChain);
+    const report: ReconReport = {
+      ts: Date.now(),
+      cash: { totalSupply: cashSupply, omnibusTotal, perInstitut, ok: cashOk },
+      securities: { isin: BOND.isin, registerTotal, osplusTotal, perKunde, ok: secOk },
+      ok: cashOk && secOk,
+    };
     this.lastRecon = report;
-    this.emit("gateway", "osplus", ["recon", "omnibus"],
-      ok ? `Ledgers match: Sammelkonten ${fmtEur(omnibusTotal)} = S-EUR supply ${fmtEur(totalSupply)}` : `Mismatch: Sammelkonten ${fmtEur(omnibusTotal)} ≠ S-EUR supply ${fmtEur(totalSupply)}`,
-      ok ? "Every S-EUR in circulation is backed by exactly one euro in OSPlus, for each Sparkasse and in total." : "The two ledgers differ. In production this raises an alert for operations.",
-      { protocol: "REST", endpoint: "POST /osplus/v1/abstimmungen", payload: report, level: ok ? "success" : "error" });
+    this.emit("gateway", "osplus", ["recon", "omnibus", "depot"],
+      report.ok
+        ? `Books match: cash ${fmtEur(omnibusTotal)} = S-EUR supply, securities ${units(registerTotal)} = OSPlus Depots`
+        : `Mismatch found (cash ${cashOk ? "ok" : "BREAK"}, securities ${secOk ? "ok" : "BREAK"})`,
+      report.ok
+        ? "Every S-EUR is backed by one euro on a Sammelkonto, and every bond in the register appears in exactly the right OSPlus Depot."
+        : "The ledgers differ. In production this raises an alert for operations.",
+      { protocol: "REST", endpoint: "POST /osplus/v1/abstimmungen", payload: report, level: report.ok ? "success" : "error" });
     return report;
   }
 

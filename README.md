@@ -1,41 +1,48 @@
-# Tokenized deposits for Sparkassen: OSPlus → OP Stack L2 → RL1
+# Tokenized bond DvP for Sparkassen: OSPlus → OP Stack L2 → RL1
 
-A guided demo of how a Sparkasse could issue **tokenized deposits (S-EUR)** on an
-OP Stack rollup, with OSPlus remaining the core banking system.
+A guided demo of **delivery versus payment (DvP)** for a tokenized bond, paid with
+**tokenized deposits**, with OSPlus remaining the core banking system.
 
 ```
- Customer        OSPlus (simulated)       Abstraction layer            OP Stack L2 (OP Sepolia)     RL1 (Sepolia)
- S-App/Filiale → Kunden, Girokonten,   →  Sparkassen Chain Gateway  →  sequencer, S-EUR contract →  BatchInbox (blobs)
-                 Sperren, Journal,        saga orchestrator,           op-batcher, op-proposer       DisputeGameFactory
-                 Sammelkonto per Spk      compliance, custody/HSM,                                   OptimismPortal
-                                          reconciliation
+ Clients          OSPlus (simulated)        Abstraction layer             OP Stack L2 (OP Sepolia)      RL1 (Sepolia)
+ issuer +       → Firmenkunden, Geschäfts- → Sparkassen Chain Gateway  →  S-EUR cash token          →  BatchInbox (blobs)
+ investor         konten, Depots, Sperren,   sagas, compliance, custody,  bond register (eWpG)          DisputeGameFactory
+                  Sammelkonto per Sparkasse  registrar, reconciliation    DvP contract, op-batcher      OptimismPortal
 ```
 
-- **OSPlus** is simulated (in the browser). It stays the system of record for euros and customers.
-- **The abstraction layer (gateway)** translates banking events into blockchain transactions and back. It's the only component holding keys.
-- **OP Sepolia** is a real, public test network built with the OP Stack. The S-EUR contract is deployed there and every action is a real transaction.
-- **RL1** is the Regulated Layer One: an EVM-based settlement layer (the Sepolia test network here). OP Sepolia publishes its transaction data (blobs) and state (dispute games) on RL1.
+**The story.** *Stadtwerke Musterstadt GmbH* (client of Sparkasse Musterstadt) issues the
+*3.25% Green Bond 2029* (ISIN DE000A4SWMS3, fictitious) as a crypto security under the German
+eWpG. *Becker Logistik GmbH* (client of Sparkasse Beispielstadt) buys all 100 bonds (€100,000)
+with S-EUR, tokenized deposits of its Sparkasse. Bond and cash change hands in **one transaction**:
+either both legs settle or neither does.
+
+- **OSPlus** is simulated (in the browser). It stays the system of record for accounts, Depots and euros.
+- **The abstraction layer (gateway)** translates banking events into blockchain transactions and back, acts as registrar of the crypto securities register, and is the only component holding keys.
+- **OP Sepolia** is a real, public test network built with the OP Stack. The three contracts are deployed there and every action is a real transaction.
+- **RL1** is the Regulated Layer One: an EVM-based settlement layer (the Sepolia test network here). OP Sepolia publishes its data (blobs) and state (dispute games) on RL1. A Regulated Layer One finalizes blocks on inclusion, so a trade is final as soon as it is anchored.
 
 The page has two views:
 
-- **Executive view** (default): one screen with four systems, four key numbers (payment time,
-  time to irrevocability on RL1, digital euros in circulation, % backed) and the lifecycle as
-  **5 steps**, each with one button: *Open accounts → Convert → Pay → Secured on RL1 → Redeem & audit*.
-- **Technical view**: the same lifecycle as **9 detailed steps**, each explained in plain language: what happens, who
+- **Executive view** (default): four systems, four key numbers (DvP settlement time, time to finality
+  on RL1, settlement risk, reconciliation) and **7 steps**, each with one button:
+  *Onboard → Issue bond → Tokenize cash → Settle DvP → Final on RL1 → Pay coupon → Redeem & reconcile*.
+  Step 4 includes a **"What if the buyer can't pay?"** test: the trade reverts and nothing moves.
+- **Technical view**: the same lifecycle as **10 detailed steps**, each explained in plain language: what happens, who
 does what, why it matters for the Sparkasse, and how long it takes. Every message
 between the systems appears with an explanation.
 
 | # | Step | Kind |
 | - | --- | --- |
-| 1 | Open an account & verify the customer (wallet + allowlist) | you trigger |
-| 2 | Money arrives on the Girokonto (SEPA) | you trigger |
-| 3 | Turn euros into S-EUR (hold → mint → book) | you trigger |
-| 4 | Pay another customer, across Sparkassen | you trigger |
-| 5 | L2 data is published on RL1 → **safe** (~1–5 min) | automatic |
-| 6 | **Final on RL1** at the moment of anchoring (a Regulated Layer One finalizes on inclusion; the Sepolia stand-in confirms ~13 min later) | automatic |
+| 1 | Onboard issuer and investor (KYB, Depot, wallet, allowlist) | you trigger |
+| 2 | Issue 100 bonds into the crypto securities register (eWpG) | you trigger |
+| 3 | Investor tokenizes €100,000 (hold → mint → book) | you trigger |
+| 4 | **Atomic DvP**: 100 bonds ⇄ €100,000 in one transaction | you trigger |
+| 5 | L2 data is published on RL1: the trade is anchored (~1–5 min) | automatic |
+| 6 | **Final on RL1** at the moment of anchoring (the Sepolia stand-in confirms ~13 min later) | automatic |
 | 7 | L2 state is proposed in a dispute game (3.5-day challenge window) | background: the story doesn't wait |
-| 8 | Turn S-EUR back into euros (burn → book) | you trigger |
-| 9 | Check that OSPlus and the chain match | you trigger |
+| 8 | Coupon: 3.25% computed from the register and paid on-chain (€3,250) | you trigger |
+| 9 | Issuer redeems its S-EUR proceeds to its Geschäftskonto | you trigger |
+| 10 | Reconcile cash (Sammelkonten = S-EUR) and securities (Depots = register) | you trigger |
 
 ## Every transaction on the explorers
 
@@ -45,7 +52,7 @@ In the executive view this is the "Proof on the public explorers" card; in the t
 
 | Network | Transactions | Explorer |
 | --- | --- | --- |
-| OP Sepolia (L2) | S-EUR deployment, allowlisting, mint, transfer, burn | [Blockscout](https://optimism-sepolia.blockscout.com) |
+| OP Sepolia (L2) | contract deployments, allowlisting, bond issuance, mint, DvP (incl. the failing test), coupon, burn | [Blockscout](https://optimism-sepolia.blockscout.com) |
 | RL1 · Sepolia | the blob batch that publishes those L2 blocks, and the dispute-game creation that proposes the L2 state | [Etherscan](https://sepolia.etherscan.io) |
 
 The RL1 batch for a payment is the first blob transaction from OP Sepolia's batcher to its
@@ -96,18 +103,22 @@ push and pull request. It needs no secrets.
 3. **Set `DEMO_ACCESS_TOKEN`** on any public deployment. Otherwise anyone who finds the URL can spend the gateway's test ETH.
 4. Keep the gateway funded with a little OP Sepolia ETH; the page shows its address when it runs low.
 
-Each demo run (and each "Start over") deploys its own S-EUR contract, so the token ledger starts
-empty together with the simulated OSPlus and the reconciliation always compares like with like.
+Each demo run (and each "Start over") deploys its own three contracts (cash token, bond register,
+DvP), so the ledgers on the chain start empty together with the simulated OSPlus and the
+reconciliation always compares like with like.
 
 Without the live variables, the Vercel deployment still works in Simulation mode.
 
 ## How it's built
 
-- `lib/osplus/`: OSPlus simulator (Mandanten, customers, IBANs with valid check digits, Sperren, Buchungsjournal, Sammelkonten)
+- `lib/osplus/`: OSPlus simulator (Mandanten, corporate clients, IBANs with valid check digits, Depots, Sperren, Buchungs- and Wertpapierjournal, Sammelkonten)
 - `lib/gateway/`: the abstraction layer (sagas with compensation, compliance, custody, settlement tracking, reconciliation)
 - `lib/chain/`: the `ChainAdapter` interface with two implementations: an in-browser OP Stack simulation, and a live one (viem, server-side in `app/api/chain`)
 - `lib/explain.ts`: all plain-language texts for steps, components and the glossary, kept in one place for review
-- `contracts/TokenizedDeposit.sol`: permissioned tokenized-deposit token (S-EUR); `pnpm compile` rebuilds it with solc-js (no Foundry needed)
+- `contracts/`: `PermissionedToken` (shared base: allowlist, mint/burn, custodial transfers with business references),
+  `TokenizedDeposit` (S-EUR cash leg), `BondToken` (eWpG crypto securities register), `DvPSettlement` (atomic DvP + coupon payment).
+  `pnpm compile` rebuilds them with solc-js (no Foundry needed)
+- `lib/bond.ts`: the demo bond's terms (ISIN, nominal, coupon, maturity)
 
 Settlement status is read from the chain itself: the L2 `safe` and `finalized` block
 tags, blob transactions sent to OP Sepolia's BatchInbox on Sepolia, and the latest games
@@ -124,4 +135,4 @@ server and funded L1 keys, not just Vercel.
 ---
 
 Independent technical demo. Not affiliated with Finanz Informatik, the DSGV or any
-Sparkasse; all institutes, customers and IBANs are fictitious.
+Sparkasse; all institutes, companies, the bond, its ISIN and all IBANs are fictitious.

@@ -6,8 +6,9 @@ import { SimulatedOpStack } from "./chain/simulated";
 import { LiveChainClient } from "./chain/live-client";
 import type { ChainStatus, L2BlockInfo } from "./chain/types";
 import { Gateway } from "./gateway/gateway";
-import type { Hex, StepId, TraceEvent } from "./types";
-import { CHAPTERS, type ChapterId } from "./explain";
+import type { StepId, TraceEvent } from "./types";
+import { CHAPTERS, INVESTOR, ISSUER, TRADE, type ChapterId } from "./explain";
+import { BOND } from "./bond";
 
 export type Mode = "simulated" | "live";
 export type StepState = "todo" | "active" | "done";
@@ -72,8 +73,8 @@ interface DemoState {
   select: (s: StepId) => void;
   view: "exec" | "tech";
   setView: (v: "exec" | "tech") => void;
-  /** S-EUR balance per customer (kundennr -> cents), refreshed after each action. */
-  balances: Record<string, number>;
+  /** On-chain positions per client (kundennr -> S-EUR cents and bonds), refreshed after each action. */
+  balances: Record<string, { cash: number; bond: number }>;
   refreshBalances: () => Promise<void>;
   runChapter: (id: ChapterId) => Promise<void>;
 
@@ -85,7 +86,8 @@ interface DemoState {
   togglePause: () => void;
   setAccessToken: (t: string) => void;
   reset: () => void;
-  run: (label: string, step: StepId, fn: (g: Gateway) => Promise<unknown>) => Promise<boolean>;
+  /** Run a gateway action. `completesStep: false` for side actions (e.g. the failing-trade test). */
+  run: (label: string, step: StepId, fn: (g: Gateway) => Promise<unknown>, completesStep?: boolean) => Promise<boolean>;
   stepStates: () => Record<StepId, StepState>;
   runLifecycle: () => Promise<void>;
   clearError: () => void;
@@ -101,13 +103,8 @@ function makeEngine(mode: Mode, get: () => DemoState, set: (p: Partial<DemoState
     const sim = new SimulatedOpStack();
     return { osplus, sim, gateway: new Gateway(osplus, sim, emit) };
   }
-  // Each run gets its own S-EUR contract (deployed on the first action), kept only for this engine.
-  let token: Hex | undefined;
-  const client = new LiveChainClient(
-    () => token,
-    (a: Hex) => (token = a),
-    () => get().accessToken,
-  );
+  // Each run deploys its own contracts on the first action; the client keeps them for this engine.
+  const client = new LiveChainClient(() => get().accessToken);
   const gateway = new Gateway(osplus, client, emit);
   const cfg = get().liveConfig;
   gateway.explorers = { l1: cfg?.l1Explorer, l2: cfg?.l2Explorer };
@@ -115,6 +112,39 @@ function makeEngine(mode: Mode, get: () => DemoState, set: (p: Partial<DemoState
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * The executive storyline as gateway calls. Each chapter is idempotent where it matters
+ * (e.g. onboarding skips clients that already exist). Returns false if a step failed.
+ */
+async function story(run: DemoState["run"], chapter: ChapterId): Promise<boolean> {
+  const g = () => engine!.gateway;
+  const client = (rolle: "Emittent" | "Investor") => g().osplus.state.kunden.find((k) => k.rolle === rolle)?.kundennr;
+  const issuer = () => client("Emittent")!;
+  const investor = () => client("Investor")!;
+  switch (chapter) {
+    case "onboard":
+      if (!client("Emittent") && !(await run(`Onboarding ${ISSUER.name}`, "onboard", (gw) => gw.onboard(ISSUER.name, ISSUER.institutId, "Emittent", ISSUER.balance))))
+        return false;
+      if (!client("Investor") && !(await run(`Onboarding ${INVESTOR.name}`, "onboard", (gw) => gw.onboard(INVESTOR.name, INVESTOR.institutId, "Investor", INVESTOR.balance))))
+        return false;
+      return true;
+    case "issue":
+      return run(`Issuing ${BOND.issueUnits} bonds`, "issue", (gw) => gw.issue(issuer(), BOND.issueUnits));
+    case "cash":
+      return run("Tokenizing €100,000", "tokenize", (gw) => gw.tokenize(investor(), TRADE.priceCents));
+    case "dvp":
+      return run("Settling DvP", "dvp", (gw) => gw.dvp(issuer(), investor(), TRADE.units, TRADE.priceCents));
+    case "final":
+      return true;
+    case "coupon":
+      return run("Paying the coupon", "coupon", (gw) => gw.coupon(issuer(), [investor()]));
+    case "close": {
+      const ok = await run("Redeeming the proceeds", "redeem", async (gw) => gw.redeem(issuer(), await gw.chain.cashBalance(gw.wallets.get(issuer())!)));
+      return ok && run("Reconciling", "reconcile", (gw) => gw.reconcile());
+    }
+  }
+}
 
 export const useDemo = create<DemoState>((set, get) => ({
   mode: "simulated",
@@ -136,30 +166,21 @@ export const useDemo = create<DemoState>((set, get) => ({
   balances: {},
   refreshBalances: async () => {
     const e = get().engine();
-    const out: Record<string, number> = {};
-    for (const [kundennr, w] of e.gateway.wallets) out[kundennr] = await e.gateway.chain.balanceOf(w);
+    if (!e.gateway.contracts) return;
+    const out: DemoState["balances"] = {};
+    for (const [kundennr, w] of e.gateway.wallets) {
+      const [cash, bond] = await Promise.all([e.gateway.chain.cashBalance(w), e.gateway.chain.bondBalance(w)]);
+      out[kundennr] = { cash, bond };
+    }
     if (engine === e) set({ balances: out });
   },
   runChapter: async (id) => {
     const { run } = get();
-    const g = () => get().engine().gateway;
-    const k = () => g().osplus.state.kunden;
     const next = (c: ChapterId) => {
       const i = CHAPTERS.findIndex((x) => x.id === c);
       if (CHAPTERS[i + 1]) set({ selected: CHAPTERS[i + 1].steps[0] });
     };
-    if (id === "account") {
-      if (!k()[0] && !(await run("Opening Anna's account", "onboard", (gw) => gw.onboard("Anna Schmidt", "SPK-MS")))) return;
-      if (!k()[1] && !(await run("Opening Ben's account", "onboard", (gw) => gw.onboard("Ben Müller", "SPK-BS")))) return;
-      if (await run("SEPA credit for Anna", "fund", (gw) => gw.fund(k()[0].kundennr, 5_000_00))) next(id);
-    } else if (id === "convert") {
-      if (await run("Converting €2,500", "tokenize", (gw) => gw.tokenize(k()[0].kundennr, 2_500_00))) next(id);
-    } else if (id === "pay") {
-      if (await run("Paying Ben €1,000", "transfer", (gw) => gw.transfer(k()[0].kundennr, k()[1].kundennr, 1_000_00))) next(id);
-    } else if (id === "redeem") {
-      if (!(await run("Redeeming €400", "redeem", (gw) => gw.redeem(k()[1].kundennr, 400_00)))) return;
-      await run("Checking the books", "reconcile", (gw) => gw.reconcile());
-    }
+    if (await story(run, id)) next(id);
   },
 
   engine: () => {
@@ -241,7 +262,7 @@ export const useDemo = create<DemoState>((set, get) => ({
     get().engine();
   },
 
-  run: async (label, step, fn) => {
+  run: async (label, step, fn, completesStep = true) => {
     if (get().busy) return false;
     set({ busy: label, error: undefined });
     try {
@@ -251,7 +272,7 @@ export const useDemo = create<DemoState>((set, get) => ({
         set({ bootstrapped: true });
       }
       await fn(g);
-      set({ flags: { ...get().flags, [step]: true } });
+      if (completesStep) set({ flags: { ...get().flags, [step]: true } });
       await get().refreshBalances().catch(() => undefined);
       return true;
     } catch (e) {
@@ -268,17 +289,18 @@ export const useDemo = create<DemoState>((set, get) => ({
     const t = g.tracked;
     const done: Record<StepId, boolean> = {
       onboard: g.wallets.size >= 2,
-      fund: !!flags.fund,
+      issue: !!flags.issue,
       tokenize: !!flags.tokenize,
-      transfer: !!flags.transfer,
+      dvp: !!flags.dvp,
       batch: t.some((x) => x.stage !== "unsafe"),
       finality: t.some((x) => x.stage === "finalized"),
       proposal: t.some((x) => x.resolved),
+      coupon: !!flags.coupon,
       redeem: !!flags.redeem,
       reconcile: !!g.lastRecon?.ok,
     };
     const active: Partial<Record<StepId, boolean>> = {
-      onboard: busy?.startsWith("Onboard") || (g.wallets.size === 1),
+      onboard: busy?.startsWith("Onboarding") || g.wallets.size === 1,
       batch: t.some((x) => x.stage === "unsafe"),
       finality: t.some((x) => x.stage === "safe"),
       proposal: t.some((x) => x.proposalIndex !== undefined && !x.resolved),
@@ -303,27 +325,19 @@ export const useDemo = create<DemoState>((set, get) => ({
     };
     const pause = () => sleep(get().mode === "simulated" ? 900 / get().speed : 300);
     try {
-      const kunden = g().osplus.state.kunden;
-      let anna = kunden[0]?.kundennr;
-      let ben = kunden[1]?.kundennr;
-      if (!anna && !(await run("Onboard Anna", "onboard", async (gw) => void (anna = (await gw.onboard("Anna Schmidt", "SPK-MS")).kundennr)))) return;
-      await pause();
-      if (!ben && !(await run("Onboard Ben", "onboard", async (gw) => void (ben = (await gw.onboard("Ben Müller", "SPK-BS")).kundennr)))) return;
-      await pause();
-      if (!(await run("Fund", "fund", (gw) => gw.fund(anna!, 5_000_00)))) return;
-      await pause();
-      if (!(await run("Tokenize", "tokenize", (gw) => gw.tokenize(anna!, 2_500_00)))) return;
-      await pause();
-      if (!(await run("Transfer", "transfer", (gw) => gw.transfer(anna!, ben!, 1_000_00)))) return;
-      // Wait only until the payments are anchored on RL1, which is final on a Regulated Layer One. The
+      for (const c of ["onboard", "issue", "cash", "dvp"] as const) {
+        if (!(await story(run, c))) return;
+        await pause();
+      }
+      // Wait only until the trade is anchored on RL1, which is final on a Regulated Layer One. The
       // state proof (3.5-day challenge window) completes in the background and never blocks the story.
       set({ selected: "batch" });
       await waitFor(() => g().tracked.every((t) => t.stage !== "unsafe"), get().mode === "simulated" ? 60_000 : 10 * 60_000);
       await pause();
       if (!get().autoplay) return;
-      if (!(await run("Redeem", "redeem", (gw) => gw.redeem(ben!, 400_00)))) return;
+      if (!(await story(run, "coupon"))) return;
       await pause();
-      await run("Reconcile", "reconcile", (gw) => gw.reconcile());
+      await story(run, "close");
     } finally {
       set({ autoplay: false });
     }

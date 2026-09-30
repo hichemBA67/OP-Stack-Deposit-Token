@@ -3,9 +3,10 @@
  *
  * A deliberately small model of the Finanz Informatik core banking system as seen
  * from an integration point of view: multi-client (one "Mandant" per Sparkasse),
- * customers with KYC/Legitimation status, IBAN accounts, holds (Sperren/
- * Vormerkungen), a booking journal with GV codes, and one omnibus account per
- * institute that backs the tokenized deposits 1:1.
+ * corporate clients with KYB/Legitimation status, IBAN business accounts, holds
+ * (Sperren/Vormerkungen), a booking journal with GV codes, securities accounts
+ * (Depots) with a securities journal, and one omnibus account per institute that
+ * backs the tokenized deposits 1:1.
  *
  * Nothing here knows about blockchains - that is the job of the gateway.
  */
@@ -21,15 +22,35 @@ export interface Kunde {
   kundennr: string;
   name: string;
   institutId: string;
+  art: "Firmenkunde";
+  rolle: "Emittent" | "Investor";
   kyc: "verified" | "pending";
-  girokonto: string; // IBAN
+  girokonto: string; // IBAN of the Geschäftskonto
+  depot: string; // Depotnummer
+}
+
+export interface Depotposition {
+  depot: string;
+  kundennr: string;
+  isin: string;
+  stueck: number;
+}
+
+export interface WpBuchung {
+  id: string;
+  ts: number;
+  depot: string;
+  isin: string;
+  stueck: number; // signed
+  text: string;
+  ref: string;
 }
 
 export interface Konto {
   iban: string;
   institutId: string;
   kundennr?: string;
-  produkt: "Girokonto" | "Sammelkonto Tokenisierte Einlagen";
+  produkt: "Geschäftskonto" | "Sammelkonto Tokenisierte Einlagen";
   saldo: number; // cents
 }
 
@@ -62,7 +83,7 @@ export const INSTITUTE: Institut[] = [
 
 /** GV codes (Geschäftsvorfallcodes). 1xx are DK-standard, 8xx are demo-specific. */
 export const GV = {
-  SEPA_GUTSCHRIFT: "166",
+  SALDOVORTRAG: "000",
   TOKENISIERUNG: "801",
   RUECKTAUSCH: "802",
   INTERBANK: "803",
@@ -81,11 +102,13 @@ export interface OsplusState {
   konten: Konto[];
   sperren: Sperre[];
   journal: Buchung[];
+  depots: Depotposition[];
+  wpJournal: WpBuchung[];
 }
 
 export class OsplusSimulator {
-  state: OsplusState = { kunden: [], konten: [], sperren: [], journal: [] };
-  private seq = { kunde: 1000, konto: 4711, buchung: 1, sperre: 1 };
+  state: OsplusState = { kunden: [], konten: [], sperren: [], journal: [], depots: [], wpJournal: [] };
+  private seq = { kunde: 1000, konto: 4711, buchung: 1, sperre: 1, depot: 700_100, wp: 1 };
 
   constructor() {
     for (const inst of INSTITUTE) {
@@ -125,14 +148,45 @@ export class OsplusSimulator {
     return this.konto(iban).saldo - gesperrt;
   }
 
-  kundeAnlegen(name: string, institutId: string): Kunde {
+  /** Corporate client with a Geschäftskonto (opening balance carried over) and a Depot. */
+  kundeAnlegen(name: string, institutId: string, rolle: Kunde["rolle"], anfangssaldo: number, ref: string): Kunde {
     const inst = this.institut(institutId);
     const kundennr = String(++this.seq.kunde);
     const iban = makeIban(inst.blz, ++this.seq.konto);
-    this.state.konten.push({ iban, institutId, kundennr, produkt: "Girokonto", saldo: 0 });
-    const kunde: Kunde = { kundennr, name, institutId, kyc: "verified", girokonto: iban };
+    this.state.konten.push({ iban, institutId, kundennr, produkt: "Geschäftskonto", saldo: 0 });
+    const kunde: Kunde = {
+      kundennr,
+      name,
+      institutId,
+      art: "Firmenkunde",
+      rolle,
+      kyc: "verified",
+      girokonto: iban,
+      depot: `${inst.blz.slice(0, 3)}-${++this.seq.depot}`,
+    };
     this.state.kunden.push(kunde);
+    if (anfangssaldo > 0) {
+      this.book({ iban, betrag: anfangssaldo, gvCode: GV.SALDOVORTRAG, buchungstext: "Saldovortrag (bestehende Einlagen)", ref });
+    }
     return kunde;
+  }
+
+  bestand(kundennr: string, isin: string) {
+    return this.state.depots.find((d) => d.kundennr === kundennr && d.isin === isin)?.stueck ?? 0;
+  }
+
+  /** Securities booking on a client's Depot (mirrors the crypto securities register). */
+  depotBuchung(kundennr: string, isin: string, stueck: number, text: string, ref: string): WpBuchung {
+    const k = this.kunde(kundennr);
+    let pos = this.state.depots.find((d) => d.kundennr === kundennr && d.isin === isin);
+    if (!pos) {
+      pos = { depot: k.depot, kundennr, isin, stueck: 0 };
+      this.state.depots.push(pos);
+    }
+    pos.stueck += stueck;
+    const b: WpBuchung = { id: `WP-${String(this.seq.wp++).padStart(5, "0")}`, ts: Date.now(), depot: k.depot, isin, stueck, text, ref };
+    this.state.wpJournal.unshift(b);
+    return b;
   }
 
   private book(b: Omit<Buchung, "id" | "ts" | "status">): Buchung {
@@ -145,17 +199,6 @@ export class OsplusSimulator {
     this.konto(b.iban).saldo += b.betrag;
     this.state.journal.unshift(buchung);
     return buchung;
-  }
-
-  /** Incoming SEPA credit transfer (pacs.008) from an external bank. */
-  sepaGutschrift(iban: string, betrag: number, auftraggeber: string, ref: string) {
-    return this.book({
-      iban,
-      betrag,
-      gvCode: GV.SEPA_GUTSCHRIFT,
-      buchungstext: `SEPA-Gutschrift ${auftraggeber}`,
-      ref,
-    });
   }
 
   sperreSetzen(iban: string, betrag: number, grund: string, ref: string): Sperre {

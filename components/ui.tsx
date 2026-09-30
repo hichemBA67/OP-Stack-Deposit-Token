@@ -5,7 +5,7 @@ import type { Component, Layer, SettlementStage, StepId } from "@/lib/types";
 export const cn = clsx;
 
 export const LAYER_META: Record<Layer, { label: string; sub: string; text: string; bg: string; border: string; dot: string }> = {
-  customer: { label: "Customer", sub: "S-App · Filiale", text: "text-slate-700", bg: "bg-slate-100", border: "border-slate-300", dot: "bg-slate-500" },
+  customer: { label: "Clients", sub: "Issuer & investor", text: "text-slate-700", bg: "bg-slate-100", border: "border-slate-300", dot: "bg-slate-500" },
   osplus: { label: "OSPlus", sub: "Core banking (simulated)", text: "text-red-700", bg: "bg-red-50", border: "border-red-200", dot: "bg-red-600" },
   gateway: { label: "Abstraction layer", sub: "Sparkassen Chain Gateway", text: "text-violet-700", bg: "bg-violet-50", border: "border-violet-200", dot: "bg-violet-600" },
   l2: { label: "OP Stack L2", sub: "OP Sepolia", text: "text-orange-700", bg: "bg-orange-50", border: "border-orange-200", dot: "bg-orange-500" },
@@ -13,11 +13,12 @@ export const LAYER_META: Record<Layer, { label: string; sub: string; text: strin
 };
 
 export const COMPONENT_LABEL: Record<Component, string> = {
-  channel: "S-App / Filiale",
-  kyc: "Kunden & KYC",
-  giro: "Girokonten",
+  channel: "Firmenkundenportal",
+  kyc: "Kunden & KYB",
+  giro: "Geschäftskonten",
   hold: "Sperren",
   omnibus: "Sammelkonto",
+  depot: "Depots",
   journal: "Buchungsjournal",
   api: "Outbox / API",
   compliance: "Compliance",
@@ -25,7 +26,9 @@ export const COMPONENT_LABEL: Record<Component, string> = {
   orchestrator: "Saga orchestrator",
   recon: "Reconciliation",
   sequencer: "Sequencer",
-  token: "S-EUR contract",
+  token: "S-EUR cash token",
+  bond: "Bond register (eWpG)",
+  dvp: "DvP contract",
   batcher: "op-batcher",
   proposer: "op-proposer",
   batchInbox: "BatchInbox (blobs)",
@@ -35,12 +38,13 @@ export const COMPONENT_LABEL: Record<Component, string> = {
 
 export const STEP_LABEL: Record<StepId, string> = {
   onboard: "Onboarding",
-  fund: "Funding",
+  issue: "Issuance",
   tokenize: "Tokenize",
-  transfer: "Transfer",
+  dvp: "DvP",
   batch: "Batch → RL1",
   finality: "RL1 finality",
   proposal: "Output root",
+  coupon: "Coupon",
   redeem: "Redeem",
   reconcile: "Reconcile",
 };

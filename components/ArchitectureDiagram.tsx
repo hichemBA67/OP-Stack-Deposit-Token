@@ -10,9 +10,9 @@ import { COMPONENT_LABEL, LAYER_META, cn } from "./ui";
 
 const COLUMN_COMPONENTS: Record<Layer, Component[]> = {
   customer: ["channel"],
-  osplus: ["kyc", "giro", "hold", "omnibus", "journal", "api"],
+  osplus: ["kyc", "giro", "hold", "omnibus", "depot", "journal", "api"],
   gateway: ["orchestrator", "compliance", "custody", "recon"],
-  l2: ["sequencer", "token", "batcher", "proposer"],
+  l2: ["sequencer", "token", "bond", "dvp", "batcher", "proposer"],
   l1: ["batchInbox", "disputeGame", "portal"],
 };
 
@@ -55,7 +55,7 @@ export function ArchitectureDiagram() {
   const tracked = engine.gateway.tracked;
 
   const footer: Record<Layer, ReactNode> = {
-    customer: <>{engine.osplus.state.kunden.length} customers</>,
+    customer: <>{engine.osplus.state.kunden.length} clients</>,
     osplus: <>Σ Sammelkonten {fmtEur(omnibus)}</>,
     gateway: (
       <>

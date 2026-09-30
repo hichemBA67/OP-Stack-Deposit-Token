@@ -15,8 +15,10 @@
  */
 import type { Hex } from "../types";
 import { randomHex } from "../format";
+import { COUPON_PER_UNIT } from "../bond";
 import { deriveCustodyAccount } from "./custody";
 import type {
+  Contracts,
   BatchInfo,
   ChainAdapter,
   ChainStatus,
@@ -37,12 +39,13 @@ export const SIM_PARAMS = {
 const CUSTODY_SEED = "sparkassen-demo-hsm";
 const GATEWAY: Hex = "0x5a4e7aa7e6a7e2a1c0de5ba4cca55e0000000001";
 
-type TxKind = "setAllowed" | "mint" | "burn" | "transfer";
+type TxKind = "onboard" | "issue" | "mint" | "burn" | "dvp" | "coupon";
 
 interface PendingTx {
   hash: Hex;
   kind: TxKind;
-  apply: () => void; // throws -> revert
+  apply: () => void; // throws -> revert (all effects of the tx are rolled back)
+  allowRevert?: boolean;
   resolve: (r: TxReceipt) => void;
   reject: (e: Error) => void;
 }
@@ -52,7 +55,7 @@ interface SimL1Block {
   ts: number;
 }
 
-const GAS: Record<TxKind, number> = { setAllowed: 47_000, mint: 71_000, burn: 38_000, transfer: 58_000 };
+const GAS: Record<TxKind, number> = { onboard: 76_000, issue: 74_000, mint: 71_000, burn: 38_000, dvp: 96_000, coupon: 64_000 };
 
 export class SimulatedOpStack implements ChainAdapter {
   kind = "simulated" as const;
@@ -71,10 +74,14 @@ export class SimulatedOpStack implements ChainAdapter {
   private lastL2At = this.now;
   private mempool: PendingTx[] = [];
 
-  private tokenAddress?: Hex;
-  private balances = new Map<Hex, number>();
+  private contracts?: Contracts;
+  private cash = new Map<Hex, number>();
+  private bond = new Map<Hex, number>();
   private allowed = new Set<Hex>();
-  private totalSupply = 0;
+  private cashSupply = 0;
+  private bondSupply = 0;
+  private issuer?: Hex;
+  private settledTrades = new Set<string>();
 
   /** Advance simulated time. Called by the UI clock; `dtMs` already includes the speed factor. */
   advance(dtMs: number) {
@@ -105,18 +112,27 @@ export class SimulatedOpStack implements ChainAdapter {
     const txs = this.mempool.splice(0);
     let included = 0;
     for (const tx of txs) {
+      const receipt = {
+        hash: tx.hash,
+        l2Block: number,
+        l2Timestamp: this.now,
+        gasUsed: GAS[tx.kind],
+        l1FeeWei: String(Math.round(1.8e10 + Math.random() * 6e9)),
+      };
+      // Snapshot so a revert undoes every effect of the tx, like the EVM does.
+      const snap = [new Map(this.cash), new Map(this.bond), this.cashSupply, this.bondSupply, this.issuer, new Set(this.settledTrades)] as const;
       try {
         tx.apply();
         included++;
-        tx.resolve({
-          hash: tx.hash,
-          l2Block: number,
-          l2Timestamp: this.now,
-          gasUsed: GAS[tx.kind],
-          l1FeeWei: String(Math.round(1.8e10 + Math.random() * 6e9)),
-        });
+        tx.resolve({ ...receipt, status: "success" });
       } catch (e) {
-        tx.reject(e as Error);
+        [this.cash, this.bond, this.cashSupply, this.bondSupply, this.issuer, this.settledTrades] = [
+          snap[0], snap[1], snap[2], snap[3], snap[4], snap[5],
+        ];
+        if (tx.allowRevert) {
+          included++;
+          tx.resolve({ ...receipt, gasUsed: Math.round(GAS[tx.kind] * 0.6), status: "reverted" });
+        } else tx.reject(e as Error);
       }
     }
     this.l2Blocks.push({ number, hash: randomHex(32), ts: this.now, txCount: included + 1, l1Origin: this.l1Head().number });
@@ -187,60 +203,108 @@ export class SimulatedOpStack implements ChainAdapter {
     if (this.proposals.length > 12) this.proposals.pop();
   }
 
-  private submit(kind: TxKind, apply: () => void): Promise<TxReceipt> {
+  private submit(kind: TxKind, apply: () => void, allowRevert = false): Promise<TxReceipt> {
     return new Promise((resolve, reject) => {
-      this.mempool.push({ hash: randomHex(32), kind, apply, resolve, reject });
+      this.mempool.push({ hash: randomHex(32), kind, apply, allowRevert, resolve, reject });
     });
+  }
+
+  private need(cond: boolean, err: string) {
+    if (!cond) throw new Error(`revert ${err}`);
+  }
+
+  private move(ledger: Map<Hex, number>, from: Hex, to: Hex, v: number) {
+    this.need(this.allowed.has(from), `NotAllowed(${from})`);
+    this.need(this.allowed.has(to), `NotAllowed(${to})`);
+    this.need((ledger.get(from) ?? 0) >= v, "InsufficientBalance()");
+    ledger.set(from, (ledger.get(from) ?? 0) - v);
+    ledger.set(to, (ledger.get(to) ?? 0) + v);
   }
 
   // ------------------------------------------------------------- adapter
 
   async init() {
-    if (this.tokenAddress) return { tokenAddress: this.tokenAddress, deployed: false };
-    this.tokenAddress = "0x5e0000000000000000000000000000000000e0e0";
-    return { tokenAddress: this.tokenAddress, deployed: true, txHash: randomHex(32) };
+    this.contracts = { cash: randomHex(20), bond: randomHex(20), dvp: randomHex(20) };
+    const c = this.contracts;
+    return {
+      contracts: c,
+      txs: [
+        { label: "Deploy the S-EUR cash token", hash: randomHex(32), address: c.cash },
+        { label: "Deploy the bond register (BondToken)", hash: randomHex(32), address: c.bond },
+        { label: "Deploy the DvP settlement contract", hash: randomHex(32), address: c.dvp },
+        { label: "Authorise DvP contract on the cash token", hash: randomHex(32) },
+        { label: "Authorise DvP contract on the bond register", hash: randomHex(32) },
+      ],
+    };
   }
 
-  async provisionWallet(iban: string) {
-    return deriveCustodyAccount(CUSTODY_SEED, iban).address as Hex;
+  async provisionWallet(id: string) {
+    return deriveCustodyAccount(CUSTODY_SEED, id).address as Hex;
   }
 
-  setAllowed(account: Hex) {
-    return this.submit("setAllowed", () => {
+  onboard(account: Hex) {
+    return this.submit("onboard", () => {
       this.allowed.add(account);
     });
   }
 
-  mint(to: Hex, cents: number) {
+  issueBond(issuer: Hex, units: number) {
+    return this.submit("issue", () => {
+      this.need(!this.issuer || this.issuer === issuer, "IssuerMismatch()");
+      this.need(this.allowed.has(issuer), `NotAllowed(${issuer})`);
+      this.issuer = issuer;
+      this.bond.set(issuer, (this.bond.get(issuer) ?? 0) + units);
+      this.bondSupply += units;
+    });
+  }
+
+  mintCash(to: Hex, cents: number) {
     return this.submit("mint", () => {
-      if (!this.allowed.has(to)) throw new Error(`revert NotAllowed(${to})`);
-      this.balances.set(to, (this.balances.get(to) ?? 0) + cents);
-      this.totalSupply += cents;
+      this.need(this.allowed.has(to), `NotAllowed(${to})`);
+      this.cash.set(to, (this.cash.get(to) ?? 0) + cents);
+      this.cashSupply += cents;
     });
   }
 
-  burn(from: Hex, cents: number) {
+  burnCash(from: Hex, cents: number) {
     return this.submit("burn", () => {
-      const bal = this.balances.get(from) ?? 0;
-      if (bal < cents) throw new Error("revert InsufficientBalance()");
-      this.balances.set(from, bal - cents);
-      this.totalSupply -= cents;
+      this.need((this.cash.get(from) ?? 0) >= cents, "InsufficientBalance()");
+      this.cash.set(from, (this.cash.get(from) ?? 0) - cents);
+      this.cashSupply -= cents;
     });
   }
 
-  transfer(from: Hex, to: Hex, cents: number) {
-    return this.submit("transfer", () => {
-      if (!this.allowed.has(from)) throw new Error(`revert NotAllowed(${from})`);
-      if (!this.allowed.has(to)) throw new Error(`revert NotAllowed(${to})`);
-      const bal = this.balances.get(from) ?? 0;
-      if (bal < cents) throw new Error("revert InsufficientBalance()");
-      this.balances.set(from, bal - cents);
-      this.balances.set(to, (this.balances.get(to) ?? 0) + cents);
+  settleDvP(tradeId: string, seller: Hex, buyer: Hex, units: number, priceCents: number, allowRevert = false) {
+    return this.submit(
+      "dvp",
+      () => {
+        this.need(!this.settledTrades.has(tradeId), "AlreadySettled()");
+        this.settledTrades.add(tradeId);
+        this.move(this.bond, seller, buyer, units); // delivery
+        this.move(this.cash, buyer, seller, priceCents); // payment
+      },
+      allowRevert,
+    );
+  }
+
+  payCoupon(holders: Hex[]) {
+    return this.submit("coupon", () => {
+      const issuer = this.issuer;
+      this.need(!!issuer, "NoIssuer()");
+      for (const h of holders) {
+        const units = this.bond.get(h) ?? 0;
+        if (!units || h === issuer) continue;
+        this.move(this.cash, issuer!, h, units * COUPON_PER_UNIT);
+      }
     });
   }
 
-  async balanceOf(account: Hex) {
-    return this.balances.get(account) ?? 0;
+  async cashBalance(account: Hex) {
+    return this.cash.get(account) ?? 0;
+  }
+
+  async bondBalance(account: Hex) {
+    return this.bond.get(account) ?? 0;
   }
 
   async status(): Promise<ChainStatus> {
@@ -262,7 +326,8 @@ export class SimulatedOpStack implements ChainAdapter {
         safe: this.l2Safe,
         finalized: this.l2Finalized,
       },
-      token: this.tokenAddress ? { address: this.tokenAddress, totalSupply: this.totalSupply } : undefined,
+      cash: this.contracts ? { address: this.contracts.cash, totalSupply: this.cashSupply } : undefined,
+      bond: this.contracts ? { address: this.contracts.bond, totalSupply: this.bondSupply } : undefined,
       gateway: { address: GATEWAY, balanceEth: "10.0" },
       batches: this.batches.map((b) => ({ ...b })),
       proposals: this.proposals.map((p) => ({ ...p })),
