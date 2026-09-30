@@ -1,0 +1,80 @@
+# OP Stack L2 node set for a chain deployed with op-deployer (see README.md).
+# TEMPLATE: pin image versions to one op-stack release and verify flags against its docs.
+#
+# Required .env next to this file:
+#   L1_RPC_URL, L1_BEACON_URL, BATCHER_KEY, PROPOSER_KEY, SEQUENCER_P2P_KEY,
+#   DISPUTE_GAME_FACTORY_ADDRESS (from .deployer/l1-addresses.json)
+# Required files in ../../.deployer: genesis.json, rollup.json
+
+x-op-image: &op
+  restart: unless-stopped
+
+services:
+  jwt:
+    image: alpine:3.20
+    command: sh -c "[ -f /shared/jwt.txt ] || (head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > /shared/jwt.txt)"
+    volumes: [shared:/shared]
+
+  op-geth-init:
+    image: us-docker.pkg.dev/oplabs-tools-artifacts/images/op-geth:latest
+    entrypoint: sh -c "[ -d /data/geth/chaindata ] || geth init --datadir=/data --state.scheme=hash /deployer/genesis.json"
+    volumes: [geth:/data, ../../.deployer:/deployer:ro]
+
+  op-geth:
+    <<: *op
+    image: us-docker.pkg.dev/oplabs-tools-artifacts/images/op-geth:latest
+    depends_on:
+      op-geth-init: { condition: service_completed_successfully }
+      jwt: { condition: service_completed_successfully }
+    command: >
+      --datadir=/data --syncmode=full --gcmode=archive
+      --http --http.addr=0.0.0.0 --http.port=8545 --http.api=eth,net,web3,debug,txpool
+      --http.vhosts=* --http.corsdomain=*
+      --ws --ws.addr=0.0.0.0 --ws.port=8546 --ws.api=eth,net,web3
+      --authrpc.addr=0.0.0.0 --authrpc.port=8551 --authrpc.vhosts=* --authrpc.jwtsecret=/shared/jwt.txt
+      --rollup.disabletxpoolgossip=true --nodiscover --maxpeers=0
+    ports: ["8545:8545", "8546:8546"]
+    volumes: [geth:/data, shared:/shared]
+
+  op-node:
+    <<: *op
+    image: us-docker.pkg.dev/oplabs-tools-artifacts/images/op-node:latest
+    depends_on: [op-geth]
+    command: >
+      op-node
+      --l1=${L1_RPC_URL} --l1.beacon=${L1_BEACON_URL} --l1.trustrpc
+      --l2=http://op-geth:8551 --l2.jwt-secret=/shared/jwt.txt
+      --rollup.config=/deployer/rollup.json
+      --sequencer.enabled --sequencer.l1-confs=5 --verifier.l1-confs=4
+      --p2p.disable --p2p.sequencer.key=${SEQUENCER_P2P_KEY}
+      --rpc.addr=0.0.0.0 --rpc.port=9545 --rpc.enable-admin
+    ports: ["9545:9545"]
+    volumes: [shared:/shared, ../../.deployer:/deployer:ro]
+
+  op-batcher:
+    <<: *op
+    image: us-docker.pkg.dev/oplabs-tools-artifacts/images/op-batcher:latest
+    depends_on: [op-node]
+    command: >
+      op-batcher
+      --l1-eth-rpc=${L1_RPC_URL} --l2-eth-rpc=http://op-geth:8545 --rollup-rpc=http://op-node:9545
+      --private-key=${BATCHER_KEY}
+      --data-availability-type=blobs --max-channel-duration=25
+      --poll-interval=1s --sub-safety-margin=6 --num-confirmations=1
+      --rpc.addr=0.0.0.0 --rpc.port=8548
+
+  op-proposer:
+    <<: *op
+    image: us-docker.pkg.dev/oplabs-tools-artifacts/images/op-proposer:latest
+    depends_on: [op-node]
+    command: >
+      op-proposer
+      --l1-eth-rpc=${L1_RPC_URL} --rollup-rpc=http://op-node:9545
+      --private-key=${PROPOSER_KEY}
+      --game-factory-address=${DISPUTE_GAME_FACTORY_ADDRESS}
+      --game-type=1 --proposal-interval=10m
+      --poll-interval=12s --rpc.addr=0.0.0.0 --rpc.port=8560
+
+volumes:
+  geth: {}
+  shared: {}
