@@ -16,7 +16,7 @@ export interface StepExplain {
   who: Partial<Record<Layer, string>>;
   /** Why a Sparkasse cares about this step. */
   why: string;
-  /** How long it takes in the simulation and on OP Sepolia / Ethereum Sepolia. */
+  /** How long it takes in the simulation and on OP Sepolia / Sepolia (RL1). */
   timing: { simulated: string; live: string };
 }
 
@@ -111,12 +111,12 @@ export const STEPS: StepExplain[] = [
     id: "finality",
     title: "RL1 finalizes (in the background)",
     kind: "wait",
-    summary: "Ethereum's own consensus makes the block containing our batch irreversible. The L2 transaction is now final.",
+    summary: "RL1's own consensus makes the block containing our batch irreversible. The L2 transaction is now final.",
     story:
-      "An RL1 block can in theory still be reorganised shortly after it is created. After two 'epochs' (about 13 minutes) Ethereum's validators finalize it, " +
+      "An RL1 block can in theory still be reorganised shortly after it is created. After two 'epochs' (about 13 minutes) RL1's validators finalize it, " +
       "and reverting it would require destroying a huge amount of staked ETH. When the RL1 block holding our batch is finalized, the L2 transaction is final too.",
     who: {
-      l1: "Ethereum validators finalize the epoch that contains the batch.",
+      l1: "RL1 validators finalize the epoch that contains the batch.",
       l2: "The L2 'finalized' head moves past our transaction.",
       gateway: "Marks the transaction as finalized. This is the natural point to treat the booking as irrevocable ('endgültig gebucht').",
     },
@@ -131,13 +131,13 @@ export const STEPS: StepExplain[] = [
     story:
       "Separately from the data, an op-proposer regularly publishes a cryptographic fingerprint (output root) of the whole L2 state on RL1, " +
       "inside a 'dispute game' contract. For 3.5 days anyone can prove that the fingerprint is wrong. If no one does, it's accepted, " +
-      "and Ethereum then 'knows' the L2 balances. This is only needed for moving assets from the L2 back to RL1. Payments between customers don't wait for it.",
+      "and RL1 then 'knows' the L2 balances. This is only needed for moving assets from the L2 back to RL1. Payments between customers don't wait for it.",
     who: {
       l2: "op-proposer computes the output root and creates a dispute game on RL1 (on OP Sepolia every ~10–15 minutes).",
       l1: "The DisputeGameFactory stores the game. The challenge clock runs for 3.5 days, then the game resolves.",
       gateway: "Links each transaction to the first game that covers it and shows the remaining challenge time.",
     },
-    why: "This is what makes the L2 a 'rollup' secured by Ethereum rather than a separate chain: even the operator can't publish a false state without being challenged.",
+    why: "This is what makes the L2 a 'rollup' secured by RL1 rather than a separate chain: even the operator can't publish a false state without being challenged.",
     timing: { simulated: "about 10 s to propose, 45 s challenge window (compressed)", live: "~10–30 min until a game covers the tx, then 3.5 days of challenge window" },
   },
   {
@@ -193,8 +193,8 @@ export const COMPONENT_EXPLAIN: Record<Component, string> = {
   token: "The S-EUR smart contract: a permissioned token with mint, burn, transfer and an allowlist. Every call carries the OSPlus reference.",
   batcher: "op-batcher: compresses L2 blocks and publishes them on RL1 as blobs. This is what makes transactions 'safe'.",
   proposer: "op-proposer: regularly publishes a fingerprint (output root) of the L2 state on RL1.",
-  batchInbox: "The Ethereum address that receives the batcher's blob transactions. The L2's complete history can be rebuilt from here.",
-  disputeGame: "The Ethereum contract that stores proposed L2 states and lets anyone challenge a wrong one during the challenge window.",
+  batchInbox: "The RL1 address that receives the batcher's blob transactions. The L2's complete history can be rebuilt from here.",
+  disputeGame: "The RL1 contract that stores proposed L2 states and lets anyone challenge a wrong one during the challenge window.",
   portal: "OptimismPortal: the RL1 contract for deposits into the L2 and withdrawals out of it. Withdrawals need a resolved dispute game.",
 };
 
@@ -203,18 +203,18 @@ export const LAYER_EXPLAIN: Record<Layer, string> = {
   osplus: "The core banking system of the Sparkassen (operated by Finanz Informatik). Simulated here. It stays the system of record for euros and customers.",
   gateway: "The abstraction layer between OSPlus and the blockchain. It translates banking events into blockchain transactions and back, and is the only component holding chain keys.",
   l2: "OP Sepolia: a public test network built with the OP Stack (Optimism's rollup software). Fast and cheap, with blocks every 2 seconds.",
-  l1: "RL1, the root settlement layer: Ethereum (here its Sepolia test network). The L2 publishes its data and state here, which is where its security comes from.",
+  l1: "RL1, the Regulated Layer One: an EVM-based settlement layer (here the public Sepolia test network). The L2 publishes its data and state here, which is where its security comes from.",
 };
 
 export const GLOSSARY: { term: string; text: string }[] = [
-  { term: "RL1", text: "The root settlement layer (layer 1) of this architecture: Ethereum (Sepolia testnet in this demo). The L2 writes its data and state to RL1 and inherits its security from it." },
+  { term: "RL1", text: "Regulated Layer One: the EVM-based settlement layer of this architecture (the public Sepolia test network in this demo). The L2 writes its data and state to RL1 and inherits its security from it." },
   { term: "L2", text: "A faster chain on top of RL1 that bundles many transactions and publishes them on RL1. Here: OP Sepolia, built with the OP Stack." },
   { term: "OP Stack", text: "Open-source software from Optimism for running L2 rollups. OP Mainnet, Base and OP Sepolia all run on it." },
   { term: "Rollup", text: "An L2 that 'rolls up' many transactions and publishes them on the L1, so anyone can verify the L2 from L1 data." },
   { term: "Unsafe", text: "Confirmed by the L2 sequencer only. Fast (2 s), but it relies on the sequencer." },
   { term: "Safe", text: "The transaction's data has been published on RL1. Anyone can re-derive it." },
   { term: "Finalized", text: "The RL1 block holding that data is final. The transaction can no longer be reversed." },
-  { term: "Blob", text: "A cheap data attachment for RL1 (Ethereum) transactions (EIP-4844), designed for rollups. Kept by Ethereum nodes for ~18 days." },
+  { term: "Blob", text: "A cheap data attachment for RL1 transactions (EIP-4844), designed for rollups. Kept by RL1 nodes for ~18 days." },
   { term: "Dispute game", text: "An RL1 contract where a proposed L2 state can be challenged for 3.5 days before it's accepted." },
   { term: "S-EUR", text: "The demo's tokenized deposit: 1 S-EUR = 1 € on a Sparkasse's Sammelkonto. Permissioned and redeemable at par." },
   { term: "Sammelkonto", text: "The omnibus account in OSPlus holding the euros that back the tokens." },
@@ -269,9 +269,9 @@ export const CHAPTERS: Chapter[] = [
   {
     id: "secure",
     title: "Anchored on RL1",
-    headline: "The payment is anchored on RL1 (Ethereum) in about 2 minutes",
-    text: "The OP Stack network publishes the payment data on RL1 within a few minutes. From then on anyone can verify it from Ethereum data. Nobody has to wait for anything after that: RL1 finality (~15 min) and the state proof (3.5-day challenge window) complete in the background.",
-    benefit: "Customers and branches get instant payments. The bank gets an auditable anchor on Ethereum within minutes, and irrevocable finality follows automatically.",
+    headline: "The payment is anchored on RL1 in about 2 minutes",
+    text: "The OP Stack network publishes the payment data on RL1 within a few minutes. From then on anyone can verify it from RL1 data. Nobody has to wait for anything after that: RL1 finality (~15 min) and the state proof (3.5-day challenge window) complete in the background.",
+    benefit: "Customers and branches get instant payments. The bank gets an auditable anchor on RL1 within minutes, and irrevocable finality follows automatically.",
     steps: ["batch", "finality", "proposal"],
     systems: ["l2", "l1"],
     auto: true,

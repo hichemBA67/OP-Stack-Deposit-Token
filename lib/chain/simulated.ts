@@ -26,7 +26,7 @@ import type {
 
 export const SIM_PARAMS = {
   l2BlockMs: 1_000, // real OP Stack: 2s
-  l1BlockMs: 3_000, // real Ethereum: 12s
+  l1BlockMs: 3_000, // real RL1 (Sepolia): 12s
   batchEveryL1Blocks: 2, // real: batcher max-channel-duration, typically minutes
   l1FinalityDepth: 6, // real: 2 epochs = 64 blocks ~ 12.8 min
   proposalIntervalMs: 10_000, // real: typically ~1h
@@ -248,7 +248,7 @@ export class SimulatedOpStack implements ChainAdapter {
       kind: "simulated",
       now: this.now,
       l1: {
-        name: "RL1 · Ethereum (simulated)",
+        name: "RL1 (simulated)",
         chainId: 11155111,
         head: l1Head,
         safe: l1Head - 2,

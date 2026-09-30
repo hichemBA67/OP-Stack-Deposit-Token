@@ -1,8 +1,8 @@
-# Your own OP Stack chain on Ethereum Sepolia (or Mainnet)
+# Your own OP Stack chain on Sepolia (or a production RL1)
 
-This is the path from "demo" to "our own rollup settling on a public Ethereum".
-It is the same software as the local Kurtosis devnet, but you deploy the L1
-contracts yourself and run the L2 services on a server.
+This is the path from "demo" to "our own rollup settling on a public EVM-based RL1".
+It is the same software OP Sepolia runs, but you deploy the RL1 contracts
+yourself and run the L2 services on a server.
 
 > Status: **template, not yet executed from this repo.** Flags change between
 > op-stack releases, so check each command against

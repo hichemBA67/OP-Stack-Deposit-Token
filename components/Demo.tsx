@@ -54,7 +54,7 @@ function DemoInner() {
           </span>
           <div>
             <h1 className="text-[15px] leading-tight font-semibold text-slate-900">Tokenized deposits for Sparkassen</h1>
-            <p className="text-xs text-slate-500">OSPlus → abstraction layer → OP Stack L2 → RL1 (Ethereum)</p>
+            <p className="text-xs text-slate-500">OSPlus → abstraction layer → OP Stack L2 → RL1 (EVM-based Regulated Layer One)</p>
           </div>
         </div>
 
@@ -120,7 +120,7 @@ function TechnicalView() {
       <Card className="grid grid-cols-2 gap-x-4 gap-y-2 px-4 py-2.5 sm:grid-cols-3 lg:grid-cols-6">
         <Stat label="Ledger" value={live ? "OP Sepolia (live)" : "Simulation"} sub={s.busy ? `⏳ ${s.busy}…` : s.autoplay ? "playing all steps" : "ready"} />
         <Stat label="Newest L2 block" value={st ? `#${st.l2.unsafe}` : "—"} sub="confirmed by sequencer" />
-        <Stat label="On Ethereum up to" value={st ? `#${st.l2.safe}` : "—"} sub="L2 'safe' head" />
+        <Stat label="On RL1 up to" value={st ? `#${st.l2.safe}` : "—"} sub="L2 'safe' head" />
         <Stat label="Final up to" value={st ? `#${st.l2.finalized}` : "—"} sub="L2 'finalized' head" />
         <Stat label="S-EUR in circulation" value={st?.token ? fmtEur(st.token.totalSupply) : "—"} sub={st?.token ? `contract ${short(st.token.address)}` : "created in step 1"} />
         <Stat label="Gateway gas" value={st?.gateway ? `${Number(st.gateway.balanceEth).toFixed(4)} ETH` : "—"} sub="pays L2 fees" />
@@ -184,7 +184,7 @@ function Intro() {
           <div>
             <div className="mb-1 font-semibold text-slate-900">The systems</div>
             <b>OSPlus</b> stays the core banking system (simulated here). An <b>abstraction layer</b> (the gateway) connects it to <b>OP Sepolia</b>, a
-            real public test network built with the OP Stack. OP Sepolia in turn publishes its data and state to <b>Ethereum Sepolia</b>, which gives it
+            real public test network built with the OP Stack. OP Sepolia in turn publishes its data and state to <b>RL1</b>, an EVM-based Regulated Layer One (here the Sepolia test network), which gives it
             its security.
           </div>
           <div>

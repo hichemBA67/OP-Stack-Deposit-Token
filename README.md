@@ -1,10 +1,10 @@
-# Tokenized deposits for Sparkassen: OSPlus → OP Stack L2 → RL1 (Ethereum)
+# Tokenized deposits for Sparkassen: OSPlus → OP Stack L2 → RL1
 
 A guided demo of how a Sparkasse could issue **tokenized deposits (S-EUR)** on an
 OP Stack rollup, with OSPlus remaining the core banking system.
 
 ```
- Customer        OSPlus (simulated)       Abstraction layer            OP Stack L2 (OP Sepolia)     RL1: Ethereum (Sepolia)
+ Customer        OSPlus (simulated)       Abstraction layer            OP Stack L2 (OP Sepolia)     RL1 (Sepolia)
  S-App/Filiale → Kunden, Girokonten,   →  Sparkassen Chain Gateway  →  sequencer, S-EUR contract →  BatchInbox (blobs)
                  Sperren, Journal,        saga orchestrator,           op-batcher, op-proposer       DisputeGameFactory
                  Sammelkonto per Spk      compliance, custody/HSM,                                   OptimismPortal
@@ -14,7 +14,7 @@ OP Stack rollup, with OSPlus remaining the core banking system.
 - **OSPlus** is simulated (in the browser). It stays the system of record for euros and customers.
 - **The abstraction layer (gateway)** translates banking events into blockchain transactions and back. It's the only component holding keys.
 - **OP Sepolia** is a real, public test network built with the OP Stack. The S-EUR contract is deployed there and every action is a real transaction.
-- **RL1** is the root settlement layer: Ethereum (Sepolia testnet here). OP Sepolia publishes its transaction data (blobs) and state (dispute games) on RL1.
+- **RL1** is the Regulated Layer One: an EVM-based settlement layer (the Sepolia test network here). OP Sepolia publishes its transaction data (blobs) and state (dispute games) on RL1.
 
 The page has two views:
 
@@ -46,7 +46,7 @@ In the executive view this is the "Proof on the public explorers" card; in the t
 | Network | Transactions | Explorer |
 | --- | --- | --- |
 | OP Sepolia (L2) | S-EUR deployment, allowlisting, mint, transfer, burn | [Blockscout](https://optimism-sepolia.blockscout.com) |
-| RL1 · Ethereum Sepolia | the blob batch that publishes those L2 blocks, and the dispute-game creation that proposes the L2 state | [Etherscan](https://sepolia.etherscan.io) |
+| RL1 · Sepolia | the blob batch that publishes those L2 blocks, and the dispute-game creation that proposes the L2 state | [Etherscan](https://sepolia.etherscan.io) |
 
 The RL1 batch for a payment is the first blob transaction from OP Sepolia's batcher to its
 BatchInbox after the payment. That's the batch that moves the L2 "safe" head past it; the demo
@@ -68,8 +68,8 @@ With no configuration the page runs in **Simulation** mode (everything in the br
 
 ### Live on OP Sepolia
 
-1. Copy `.env.example` to `.env.local` and keep the OP Sepolia preset (public RPCs, no account needed).
-2. Set `GATEWAY_PRIVATE_KEY` to a **fresh key used only for this demo**.
+1. The OP Sepolia / RL1 settings (public RPCs, explorers) are built in, so no configuration is needed for them.
+2. Put `GATEWAY_PRIVATE_KEY=0x…` in `.env.local`, using a **fresh key used only for this demo**.
 3. Send that address a little **OP Sepolia ETH** (0.01 is plenty) from a faucet, e.g.
    the [Superchain faucet](https://console.optimism.io/faucet). The page shows the address and links when the balance is empty.
 4. `pnpm dev`. The page defaults to **OP Sepolia (live)**. The first action deploys the S-EUR contract.
@@ -91,8 +91,8 @@ push and pull request. It needs no secrets.
 
 1. In Vercel, *Add New → Project* and import the GitHub repo (framework preset Next.js, no build settings needed).
    Every push to `main` then redeploys automatically.
-2. Add the variables from `.env.example` under *Project → Settings → Environment Variables*, with
-   your own `GATEWAY_PRIVATE_KEY`.
+2. Add `GATEWAY_PRIVATE_KEY` under *Project → Settings → Environment Variables*. Everything else has built-in
+   defaults (see `.env.example` to override them).
 3. **Set `DEMO_ACCESS_TOKEN`** on any public deployment. Otherwise anyone who finds the URL can spend the gateway's test ETH.
 4. Keep the gateway funded with a little OP Sepolia ETH; the page shows its address when it runs low.
 

@@ -27,7 +27,21 @@ import type { BatchInfo, ChainStatus, GameStatus, ProposalInfo, TxReceipt } from
  * chain you deployed with op-deployer on Sepolia / Mainnet.
  */
 
-const env = (k: string) => process.env[k]?.trim() || undefined;
+/**
+ * Built-in preset: OP Sepolia (L2) settling on RL1 (here: Sepolia). Any value can be overridden
+ * with an environment variable. The gateway key is deliberately NOT part of the preset: it must
+ * come from GATEWAY_PRIVATE_KEY (.env.local locally, project settings on Vercel).
+ */
+const DEFAULTS: Record<string, string> = {
+  L1_RPC_URL: "https://sepolia.gateway.tenderly.co",
+  L2_RPC_URL: "https://sepolia.optimism.io",
+  L1_NAME: "RL1 · Sepolia",
+  L2_NAME: "OP Sepolia",
+  L1_EXPLORER_URL: "https://sepolia.etherscan.io",
+  L2_EXPLORER_URL: "https://optimism-sepolia.blockscout.com",
+};
+
+const env = (k: string) => process.env[k]?.trim() || DEFAULTS[k];
 
 export function liveConfigured() {
   return Boolean(env("L1_RPC_URL") && env("L2_RPC_URL") && env("GATEWAY_PRIVATE_KEY"));
@@ -36,7 +50,7 @@ export function liveConfigured() {
 export function publicLiveConfig() {
   return {
     available: liveConfigured(),
-    l1Name: env("L1_NAME") ?? "RL1 · Ethereum",
+    l1Name: env("L1_NAME") ?? "RL1",
     l2Name: env("L2_NAME") ?? "OP Stack L2",
     l1Explorer: env("L1_EXPLORER_URL"),
     l2Explorer: env("L2_EXPLORER_URL"),
@@ -399,7 +413,7 @@ export async function status(requestedToken?: string): Promise<ChainStatus> {
     kind: "live",
     now: Date.now(),
     l1: {
-      name: env("L1_NAME") ?? `RL1 · Ethereum (chain ${c.l1ChainId})`,
+      name: env("L1_NAME") ?? `RL1 (chain ${c.l1ChainId})`,
       chainId: c.l1ChainId,
       head: Math.max(Number(l1Head.number), Number(l1Safe?.number ?? 0n)),
       safe: Math.max(Number(l1Safe?.number ?? 0n), Number(l1Fin?.number ?? 0n)),

@@ -9,7 +9,7 @@ export const LAYER_META: Record<Layer, { label: string; sub: string; text: strin
   osplus: { label: "OSPlus", sub: "Core banking (simulated)", text: "text-red-700", bg: "bg-red-50", border: "border-red-200", dot: "bg-red-600" },
   gateway: { label: "Abstraction layer", sub: "Sparkassen Chain Gateway", text: "text-violet-700", bg: "bg-violet-50", border: "border-violet-200", dot: "bg-violet-600" },
   l2: { label: "OP Stack L2", sub: "OP Sepolia", text: "text-orange-700", bg: "bg-orange-50", border: "border-orange-200", dot: "bg-orange-500" },
-  l1: { label: "RL1 · Ethereum", sub: "Settlement layer", text: "text-indigo-700", bg: "bg-indigo-50", border: "border-indigo-200", dot: "bg-indigo-600" },
+  l1: { label: "RL1", sub: "Regulated Layer One", text: "text-indigo-700", bg: "bg-indigo-50", border: "border-indigo-200", dot: "bg-indigo-600" },
 };
 
 export const COMPONENT_LABEL: Record<Component, string> = {

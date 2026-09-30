@@ -14,7 +14,7 @@ const SYSTEMS: { layer: Layer; name: string; role: string; icon: ReactNode; tone
   { layer: "osplus", name: "OSPlus", role: "Core banking. Keeps customers, accounts and euros.", icon: <Building2 className="size-5" />, tone: "text-red-700 bg-red-50 border-red-200" },
   { layer: "gateway", name: "Abstraction layer", role: "Connects OSPlus to the blockchain and holds the keys.", icon: <Layers className="size-5" />, tone: "text-violet-700 bg-violet-50 border-violet-200" },
   { layer: "l2", name: "OP Stack L2", role: "Fast payment network. A new block every 2 seconds.", icon: <Cpu className="size-5" />, tone: "text-orange-700 bg-orange-50 border-orange-200" },
-  { layer: "l1", name: "RL1 · Ethereum", role: "Settlement layer. Makes payments final and verifiable.", icon: <Landmark className="size-5" />, tone: "text-indigo-700 bg-indigo-50 border-indigo-200" },
+  { layer: "l1", name: "RL1", role: "Regulated Layer One (EVM-based). Makes payments final and verifiable.", icon: <Landmark className="size-5" />, tone: "text-indigo-700 bg-indigo-50 border-indigo-200" },
 ];
 
 export function ExecutiveView() {
@@ -49,7 +49,7 @@ export function ExecutiveView() {
                   <p className="mt-1 text-[13px] leading-snug text-slate-700">{sys.role}</p>
                   {sys.layer === "osplus" && <p className="mt-1 text-[11px] text-slate-500">simulated in this demo</p>}
                   {sys.layer === "l2" && <p className="mt-1 text-[11px] text-slate-500">{s.mode === "live" ? "live: OP Sepolia" : "simulated"}</p>}
-                  {sys.layer === "l1" && <p className="mt-1 text-[11px] text-slate-500">{s.mode === "live" ? "live: Ethereum Sepolia" : "simulated"}</p>}
+                  {sys.layer === "l1" && <p className="mt-1 text-[11px] text-slate-500">{s.mode === "live" ? "live: Sepolia" : "simulated"}</p>}
                 </div>
                 {i < SYSTEMS.length - 1 && (
                   <div className="flex items-center justify-center text-slate-300">
@@ -130,7 +130,7 @@ export function ExecutiveView() {
       <Card className="p-4 md:p-6">
         <h3 className="text-lg font-semibold text-slate-900">Proof on the public explorers</h3>
         <p className="mb-3 text-[14px] text-slate-600">
-          Every blockchain transaction of this story, on the <b>OP Sepolia</b> explorer (payments) and the <b>Sepolia Etherscan</b> for RL1 (batches
+          Every blockchain transaction of this story, on the <b>OP Sepolia</b> explorer (payments) and the <b>RL1 explorer</b> (Sepolia) (batches
           and state proposals that anchor the payments). Anyone can check them.
         </p>
         <TxList compact />
@@ -166,7 +166,7 @@ function Hero() {
         : anchored
           ? `${live ? "measured" : "simulated"} · final ≈ 15 min later, in background`
           : live
-            ? "expected · published on Ethereum"
+            ? "expected · published on RL1"
             : "simulated (real ≈ 2 min)",
       measured: !!anchored,
     },
@@ -187,7 +187,7 @@ function Hero() {
         </h2>
         <p className="mt-2 max-w-3xl text-[16px] leading-relaxed text-slate-600">
           Tokenized deposits: backed 1:1 by customer deposits in <b>OSPlus</b>, moved on an <b>OP Stack</b> network, and made final and verifiable on{" "}
-          <b>RL1 (Ethereum)</b>. Five steps below show the full lifecycle.
+          <b>RL1</b>, an EVM-based Regulated Layer One. Five steps below show the full lifecycle.
         </p>
         <div className="mt-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
           {kpis.map((k) => (
@@ -313,7 +313,7 @@ function SettlementTimeline() {
     },
     {
       label: "Published on RL1",
-      sub: "anyone can verify it from Ethereum data",
+      sub: "anyone can verify it from RL1 data",
       done: !!t.safeAt,
       when: since(t.safeAt),
       wait: live ? "usually 1–5 min" : "a few seconds",

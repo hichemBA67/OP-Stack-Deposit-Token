@@ -166,7 +166,7 @@ function SettlementProgress({ step }: { step: StepId }) {
           <div className="text-[11px] text-slate-500">{lag(st.l2.safe)} behind</div>
         </div>
         <div>
-          <div className="text-[11px] text-slate-500">Finalized head (Ethereum final)</div>
+          <div className="text-[11px] text-slate-500">Finalized head (RL1 final)</div>
           <div className="font-mono font-semibold text-emerald-700">#{st.l2.finalized}</div>
           <div className="text-[11px] text-slate-500">{lag(st.l2.finalized)} behind</div>
         </div>

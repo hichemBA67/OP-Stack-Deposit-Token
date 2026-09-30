@@ -315,7 +315,7 @@ export const useDemo = create<DemoState>((set, get) => ({
       if (!(await run("Tokenize", "tokenize", (gw) => gw.tokenize(anna!, 2_500_00)))) return;
       await pause();
       if (!(await run("Transfer", "transfer", (gw) => gw.transfer(anna!, ben!, 1_000_00)))) return;
-      // Wait only until the payments are anchored on RL1 ("safe"). Finality (~15 min on Ethereum) and the
+      // Wait only until the payments are anchored on RL1 ("safe"). Finality (~15 min on RL1) and the
       // state proof (3.5-day challenge window) complete in the background and never block the story.
       set({ selected: "batch" });
       await waitFor(() => g().tracked.every((t) => t.stage !== "unsafe"), get().mode === "simulated" ? 60_000 : 10 * 60_000);

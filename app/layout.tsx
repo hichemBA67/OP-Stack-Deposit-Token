@@ -15,7 +15,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Tokenized Deposits on OP Stack",
   description:
-    "Demo architecture: OSPlus core banking simulator → abstraction layer → OP Stack L2 → RL1 (Ethereum) settlement.",
+    "Demo architecture: OSPlus core banking simulator → abstraction layer → OP Stack L2 → RL1 (EVM-based Regulated Layer One) settlement.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

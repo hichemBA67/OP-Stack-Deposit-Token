@@ -5,7 +5,7 @@ const rows: [string, string, string][] = [
   ["OSPlus (simulated)", "Kunden, Girokonten, Sperren, Buchungsjournal, one Sammelkonto per Sparkasse", "System of record for fiat and customer data. Emits business events (outbox) and accepts bookings via API."],
   ["Abstraction layer", "Sparkassen Chain Gateway: saga orchestrator, compliance, custody/HSM, reconciliation", "Anti-corruption layer. Maps OSPlus concepts (IBAN, Buchung, EndToEndId) to ledger commands and back. Only component with chain keys."],
   ["OP Stack L2", "OP Sepolia (live) or simulated: sequencer, op-batcher, op-proposer, S-EUR contract", "Token ledger with ~2s blocks. In production this would be the Sparkassen's own OP Stack chain, run by or for the Sparkassen-Finanzgruppe."],
-  ["RL1 (Ethereum)", "Ethereum Sepolia: BatchInbox (blobs), DisputeGameFactory, OptimismPortal", "Data availability and settlement: L2 blocks become final with L1 finality, and state roots can be challenged for 3.5 days."],
+  ["RL1 (Regulated Layer One)", "EVM-based, here Sepolia: BatchInbox (blobs), DisputeGameFactory, OptimismPortal", "Data availability and settlement: L2 blocks become final with L1 finality, and state roots can be challenged for 3.5 days."],
 ];
 
 export function AboutView() {
@@ -54,7 +54,7 @@ export function AboutView() {
       <section>
         <h3 className="mb-1 text-sm font-semibold text-slate-900">What a production design would need to address</h3>
         <ul className="list-disc space-y-1 pl-5">
-          <li><b>Confidentiality</b>: rollup batches on public Ethereum make every L2 tx public. Options: OP Stack Alt-DA (bank-run DA with only commitments on L1), privacy layers, or posting only hashes. This is the biggest design decision for a bank.</li>
+          <li><b>Confidentiality</b>: rollup batches on a public RL1 make every L2 tx public. Options: OP Stack Alt-DA (bank-run DA with only commitments on L1), privacy layers, or posting only hashes. This is the biggest design decision for a bank.</li>
           <li><b>Regulatory classification</b>: tokenized commercial-bank deposit (deposit guarantee applies) vs. e-money token under MiCA; BaFin, DORA outsourcing and ICT risk for sequencer/DA operators.</li>
           <li><b>Sequencer operation</b>: run by FI (or a Verbund entity) in its data centres; permissioned dispute games; key management in HSMs.</li>
           <li><b>OSPlus integration</b>: real event streaming (outbox/CDC), idempotency on EndToEndId, end-of-day reconciliation, cut-off times, Storno handling.</li>

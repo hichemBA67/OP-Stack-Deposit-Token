@@ -350,7 +350,7 @@ export class Gateway {
     if (st.kind === "live") this.explorers = { l1: st.l1.explorer ?? this.explorers.l1, l2: st.l2.explorer ?? this.explorers.l2 };
     const l1Link = (h?: string) => {
       const url = explorerUrl(this.explorers.l1, "tx", h);
-      return url ? { label: "View on Sepolia Etherscan", url } : undefined;
+      return url ? { label: "View on RL1 explorer", url } : undefined;
     };
     const names = (txs: TrackedTx[]) => txs.map((t) => t.label).join(", ");
 
@@ -417,7 +417,7 @@ export class Gateway {
         components: ["batchInbox", "recon"],
         title: `RL1 finalized. Now FINAL: ${names(nowFinal)}`,
         explain:
-          "The RL1 block containing the batch is now finalized by Ethereum's validators, so it can't be reverted. These bookings are irrevocable.",
+          "The RL1 block containing the batch is now finalized by RL1's validators, so it can't be reverted. These bookings are irrevocable.",
         protocol: "RL1 finality",
         endpoint: "eth_getBlockByNumber('finalized')",
         payload: { l1Finalized: st.l1.finalized, l2Finalized: st.l2.finalized },
@@ -463,7 +463,7 @@ export class Gateway {
         endpoint: "DisputeGameFactory.create()",
         payload: p,
         level: "info",
-        link: p.txHash ? l1Link(p.txHash) : explorerUrl(this.explorers.l1, "address", p.gameAddress) ? { label: "View game on Sepolia Etherscan", url: explorerUrl(this.explorers.l1, "address", p.gameAddress)! } : undefined,
+        link: p.txHash ? l1Link(p.txHash) : explorerUrl(this.explorers.l1, "address", p.gameAddress) ? { label: "View game on RL1 explorer", url: explorerUrl(this.explorers.l1, "address", p.gameAddress)! } : undefined,
       });
     }
     for (const p of proposals.filter((p) => p.status === "DEFENDER_WINS")) {
