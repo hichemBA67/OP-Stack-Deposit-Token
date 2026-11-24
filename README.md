@@ -21,6 +21,13 @@ either both legs settle or neither does.
 - **OP Sepolia** is a real, public test network built with the OP Stack. The three contracts are deployed there and every action is a real transaction.
 - **RL1** is the Regulated Layer One: an EVM-based settlement layer (the Sepolia test network here). OP Sepolia publishes its data (blobs) and state (dispute games) on RL1. A Regulated Layer One finalizes blocks on inclusion, so a trade is final as soon as it is anchored.
 
+## Documentation
+
+Full technical documentation is in [`docs/`](docs/README.md) and is also served by the app at `/docs`
+(and on the GitHub Pages site): getting started, architecture, business lifecycle, OSPlus simulator,
+abstraction layer, smart contracts, chain adapters and API, settlement and finality, reconciliation,
+frontend, configuration and deployment, security model, limitations and a glossary.
+
 The page has two views:
 
 - **Executive view** (default): four systems, four key numbers (DvP settlement time, time to finality
@@ -109,6 +116,18 @@ reconciliation always compares like with like.
 
 Without the live variables, the Vercel deployment still works in Simulation mode.
 
+## Deploy to GitHub Pages (Simulation only)
+
+The [Pages workflow](.github/workflows/pages.yml) builds a static export on every push to `main`:
+the demo in Simulation mode at the root and the documentation at `/docs`. GitHub Pages has no
+server, so `/api/chain` and Live mode are left out, and no secret is involved.
+
+1. *Settings → Pages → Build and deployment → Source: **GitHub Actions*** (once).
+2. Push to `main` (or run the workflow manually).
+
+Build it locally with `NEXT_PUBLIC_BASE_PATH="" pnpm build:pages` (output in `out/`).
+GitHub Pages for a private repository needs a paid GitHub plan, and the published site is public.
+
 ## How it's built
 
 - `lib/osplus/`: OSPlus simulator (Mandanten, corporate clients, IBANs with valid check digits, Depots, Sperren, Buchungs- and Wertpapierjournal, Sammelkonten)
@@ -119,6 +138,7 @@ Without the live variables, the Vercel deployment still works in Simulation mode
   `TokenizedDeposit` (S-EUR cash leg), `BondToken` (eWpG crypto securities register), `DvPSettlement` (atomic DvP + coupon payment).
   `pnpm compile` rebuilds them with solc-js (no Foundry needed)
 - `lib/bond.ts`: the demo bond's terms (ISIN, nominal, coupon, maturity)
+- `docs/`: the documentation (Markdown), rendered at `/docs` by `app/docs/` and `lib/docs.ts`
 
 Settlement status is read from the chain itself: the L2 `safe` and `finalized` block
 tags, blob transactions sent to OP Sepolia's BatchInbox on Sepolia, and the latest games

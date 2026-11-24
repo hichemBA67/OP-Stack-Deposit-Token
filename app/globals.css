@@ -58,3 +58,37 @@ body {
 .row-in { animation: row-in 1.6s ease-out; }
 
 .scroll-thin { scrollbar-width: thin; }
+
+/* ------------------------------------------------------------------ documentation (/docs) */
+.doc-content { color: #1e293b; font-size: 15.5px; line-height: 1.65; max-width: 860px; }
+.doc-content > * + * { margin-top: 0.9em; }
+.doc-content h1 { font-size: 2rem; line-height: 1.2; font-weight: 700; letter-spacing: -0.02em; color: #0f172a; text-wrap: balance; }
+.doc-content h2 { margin-top: 2.2em; padding-bottom: 0.3em; border-bottom: 1px solid #e2e8f0; font-size: 1.45rem; font-weight: 650; letter-spacing: -0.01em; color: #0f172a; text-wrap: balance; }
+.doc-content h3 { margin-top: 1.8em; font-size: 1.15rem; font-weight: 650; color: #0f172a; }
+.doc-content h4 { margin-top: 1.5em; font-size: 0.85rem; font-weight: 650; text-transform: uppercase; letter-spacing: 0.05em; color: #475569; }
+.doc-content h1, .doc-content h2, .doc-content h3, .doc-content h4 { position: relative; scroll-margin-top: 1rem; }
+.doc-content .anchor { position: absolute; left: -1.1em; padding-right: 0.3em; color: #cbd5e1; text-decoration: none; opacity: 0; }
+.doc-content :is(h1, h2, h3, h4):hover .anchor { opacity: 1; }
+.doc-content p, .doc-content li { max-width: 75ch; }
+.doc-content a { color: #b91c1c; text-decoration: underline; text-underline-offset: 2px; text-decoration-color: color-mix(in oklab, currentColor 40%, transparent); }
+.doc-content a:hover { text-decoration-color: currentColor; }
+.doc-content strong { font-weight: 650; color: #0f172a; }
+.doc-content ul, .doc-content ol { padding-left: 1.4em; }
+.doc-content ul { list-style: disc; }
+.doc-content ol { list-style: decimal; }
+.doc-content li + li { margin-top: 0.3em; }
+.doc-content li > p { margin: 0; }
+.doc-content :not(pre) > code { font-family: var(--font-geist-mono), ui-monospace, monospace; font-size: 0.86em; background: #eef1f5; border-radius: 4px; padding: 0.1em 0.35em; overflow-wrap: anywhere; }
+.doc-content pre.code { overflow-x: auto; background: #0f172a; color: #e2e8f0; border-radius: 10px; padding: 14px 16px; font-family: var(--font-geist-mono), ui-monospace, monospace; font-size: 13px; line-height: 1.55; }
+.doc-content pre.mermaid { font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif; overflow-x: auto; background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 16px; text-align: center; font-size: 13px; color: #64748b; white-space: pre; }
+.doc-content pre.mermaid[data-processed] { white-space: normal; color: inherit; }
+.doc-content pre.mermaid svg { max-width: 100%; height: auto; margin: 0 auto; }
+.doc-content blockquote { border-left: 3px solid #e2001a; background: #fff; border-radius: 0 8px 8px 0; padding: 10px 14px; color: #334155; }
+.doc-content .table-wrap { overflow-x: auto; border: 1px solid #e2e8f0; border-radius: 10px; background: #fff; }
+.doc-content table { width: 100%; border-collapse: collapse; font-size: 13.8px; line-height: 1.45; }
+.doc-content th, .doc-content td { padding: 8px 12px; border-bottom: 1px solid #e2e8f0; text-align: left; vertical-align: top; }
+.doc-content th { background: #f1f5f9; font-size: 12px; font-weight: 650; text-transform: uppercase; letter-spacing: 0.04em; color: #475569; white-space: nowrap; }
+.doc-content tr:last-child td { border-bottom: 0; }
+.doc-content th[align="right"], .doc-content td[align="right"] { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.doc-content td code { white-space: nowrap; }
+.doc-content hr { border: 0; border-top: 1px solid #e2e8f0; margin: 2em 0; }

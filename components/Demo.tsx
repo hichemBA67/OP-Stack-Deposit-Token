@@ -1,8 +1,9 @@
 "use client";
 
-import { ChevronDown, Copy, ExternalLink, Landmark, Pause, Play, RotateCcw, Sparkles, X } from "lucide-react";
+import { BookOpen, ChevronDown, Copy, ExternalLink, Landmark, Pause, Play, RotateCcw, Sparkles, X } from "lucide-react";
+import Link from "next/link";
 import { useEffect, useState } from "react";
-import { useDemo, type Mode } from "@/lib/store";
+import { STATIC_DEMO, useDemo, type Mode } from "@/lib/store";
 import { GLOSSARY } from "@/lib/explain";
 import { BOND } from "@/lib/bond";
 import { fmtEur, short } from "@/lib/format";
@@ -60,6 +61,12 @@ function DemoInner() {
         </div>
 
         <div className="ml-auto flex flex-wrap items-center gap-2">
+          <Link
+            href="/docs"
+            className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+          >
+            <BookOpen className="size-4" /> Documentation
+          </Link>
           <ViewSwitch />
           <ModeSwitch />
           {!live && s.view === "tech" && (
@@ -89,6 +96,17 @@ function DemoInner() {
           )}
         </div>
       </header>
+
+      {STATIC_DEMO && (
+        <div className="rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-[13.5px] text-slate-600">
+          This hosted copy runs in <b>Simulation</b> mode: everything happens in your browser with sped-up timings. Live mode on OP Sepolia needs the
+          server part, so run the project locally or on Vercel. See the{" "}
+          <Link href="/docs/getting-started" className="text-sky-700 hover:underline">
+            documentation
+          </Link>
+          .
+        </div>
+      )}
 
       {live && <LiveBanner />}
 
@@ -216,10 +234,10 @@ function ModeSwitch() {
           role="radio"
           aria-checked={mode === o.id}
           key={o.id}
-          title={o.title}
-          disabled={busy}
+          title={STATIC_DEMO && o.id === "live" ? "Live mode needs the server: run it locally or on Vercel (see the documentation)" : o.title}
+          disabled={busy || (STATIC_DEMO && o.id === "live")}
           onClick={() => setMode(o.id)}
-          className={cn("rounded-md px-2.5 py-0.5 text-xs font-medium", mode === o.id ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100")}
+          className={cn("rounded-md px-2.5 py-0.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-40", mode === o.id ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100")}
         >
           {o.label}
         </button>

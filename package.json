@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "build:pages": "bash scripts/build-pages.sh",
     "start": "next start",
     "lint": "eslint",
     "compile": "tsx scripts/compile.ts",
@@ -13,6 +14,8 @@
   "dependencies": {
     "clsx": "^2.1.1",
     "lucide-react": "^1.49.0",
+    "marked": "18.2.0",
+    "mermaid": "11.17.2",
     "next": "16.3.7",
     "react": "19.2.8",
     "react-dom": "19.2.8",

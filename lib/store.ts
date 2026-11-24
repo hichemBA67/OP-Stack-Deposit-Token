@@ -11,6 +11,9 @@ import { CHAPTERS, INVESTOR, ISSUER, TRADE, type ChapterId } from "./explain";
 import { BOND } from "./bond";
 
 export type Mode = "simulated" | "live";
+
+/** True in the static export for GitHub Pages: no server, so Simulation mode only. */
+export const STATIC_DEMO = process.env.NEXT_PUBLIC_STATIC_DEMO === "true";
 export type StepState = "todo" | "active" | "done";
 
 export interface LiveConfig {
@@ -191,14 +194,16 @@ export const useDemo = create<DemoState>((set, get) => ({
   start: () => {
     if (clock) return;
     set({ accessToken: ls.get("live.accessToken"), view: ls.get("view") === "tech" ? "tech" : "exec" });
-    fetch("/api/chain")
-      .then((r) => r.json())
-      .then((c: LiveConfig) => {
-        set({ liveConfig: c });
-        // Default to the live chain when the server is configured for it and nothing has happened yet.
-        if (c.available && get().mode === "simulated" && !get().events.length) get().setMode("live");
-      })
-      .catch(() => set({ liveConfig: undefined }));
+    // The static GitHub Pages build has no server, so there is no /api/chain to ask.
+    if (!STATIC_DEMO)
+      fetch("/api/chain")
+        .then((r) => r.json())
+        .then((c: LiveConfig) => {
+          set({ liveConfig: c });
+          // Default to the live chain when the server is configured for it and nothing has happened yet.
+          if (c.available && get().mode === "simulated" && !get().events.length) get().setMode("live");
+        })
+        .catch(() => set({ liveConfig: undefined }));
     lastTick = performance.now();
     clock = setInterval(async () => {
       const now = performance.now();
